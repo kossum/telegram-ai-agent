@@ -550,3 +550,73 @@ def test_public_rich_sender_falls_back_when_ordered_list_restarts() -> None:
     assert decision.eligible is False
     assert decision.reason == "ordered-list-restart"
     assert decision.fallback_text == text
+
+
+def test_usage_command_is_public() -> None:
+    names = {c.command for c in build_bot_commands("en")}
+    assert "usage" in names
+
+
+def test_usage_handler_exists() -> None:
+    assert commands.handle_usage is not None
+
+
+def test_context_usage_from_rollout(tmp_path, monkeypatch) -> None:
+    from telegram_bot.core.services.context_usage import (
+        format_usage,
+        get_codex_context_usage,
+        resolve_max_context_tokens,
+    )
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    sid = "01a0a4c2-6fe5-7fd2-ba62-23f21c5b8bf3"
+    root = tmp_path / "sessions" / "2026" / "09" / "15"
+    root.mkdir(parents=True)
+    rollout = root / f"rollout-2026-09-15T11-10-01-{sid}.jsonl"
+    turn_ctx = {"type": "turn_context", "payload": {"model": "qwen3.8-27b"}}
+    usage_rec = {
+        "type": "token_usage_record",
+        "payload": {
+            "session_id": sid,
+            "timestamp": "2026-09-15T11:11:00Z",
+            "usage": {
+                "input_tokens": 1000,
+                "output_tokens": 100,
+                "total_tokens": 1100,
+            },
+            "turn_token_usage": {"total_tokens": 1100},
+            "thread_token_usage": {"total_tokens": 1100},
+        },
+    }
+    compact_rec = {
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Summary of prior turns"}],
+            "internal_chat_message_metadata_passthrough": {
+                "turn_id": "t1",
+                "content_item_kinds": ["compaction.summary"],
+            },
+        },
+    }
+    data = "".join(json.dumps(r) + "\n" for r in (turn_ctx, usage_rec, compact_rec))
+    rollout.write_text(data)
+
+    usage = get_codex_context_usage(sid, home=tmp_path)
+    assert usage is not None
+    assert usage.context_tokens == 1000
+    assert usage.model == "qwen3.8-27b"
+    assert usage.turn_total_tokens == 1100
+    assert usage.thread_total_tokens == 1100
+    assert usage.compaction_count == 1
+
+    (tmp_path / "config.toml").write_text("model_context_window = 32768\n")
+    assert resolve_max_context_tokens(None, home=tmp_path) == 32768
+    assert resolve_max_context_tokens(2000, home=tmp_path) == 2000
+
+    text = format_usage(usage, 2000)
+    assert "50%" in text
+    assert "1,000" in text
+    assert "2,000" in text
+    assert "Compactions: 1" in text

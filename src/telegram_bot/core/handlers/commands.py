@@ -18,6 +18,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from aiogram.types.inaccessible_message import InaccessibleMessage
 
+from telegram_bot.core.config import Settings
 from telegram_bot.core.handlers.forward import ForwardBatcher
 from telegram_bot.core.keyboards import (
     RESUME_PAGE_SIZE,
@@ -32,6 +33,11 @@ from telegram_bot.core.keyboards import (
 from telegram_bot.core.messages import reset_lang_cache, t
 from telegram_bot.core.services.claude import SessionManager
 from telegram_bot.core.services.codex_update import CodexUpdateResult, CodexUpdateService
+from telegram_bot.core.services.context_usage import (
+    format_usage,
+    get_codex_context_usage,
+    resolve_max_context_tokens,
+)
 from telegram_bot.core.services.message_queue import MessageQueue
 from telegram_bot.core.services.picker_store import PickerState, PickerStore
 from telegram_bot.core.services.providers import engine_display_name
@@ -354,6 +360,41 @@ async def handle_mcpstatus(message: Message, tmux_manager: TmuxManager) -> None:
     key = channel_key(message)
     status = html.escape(tmux_manager.mcp_status_text(key))
     await message.answer(f"<pre>{status}</pre>", parse_mode="HTML")
+
+
+@router.message(Command("usage"))
+async def handle_usage(
+    message: Message,
+    session_manager: SessionManager,
+    settings: Settings,
+) -> None:
+    """Report the current context-window usage of this chat's Codex session."""
+    key = channel_key(message)
+    session = session_manager._get_session(key)
+    if session.engine != "codex":
+        await message.answer(t("ui.usage_not_codex"))
+        return
+    if not session.session_id:
+        await message.answer(t("ui.usage_no_session"))
+        return
+    usage = get_codex_context_usage(session.session_id)
+    if usage is None:
+        await message.answer(t("ui.usage_not_found"))
+        return
+    max_tokens = resolve_max_context_tokens(settings.codex_context_window_max)
+    text = format_usage(usage, max_tokens)
+
+    async def _send_html() -> object:
+        return await message.answer(text, parse_mode="HTML")
+
+    async def _send_plain() -> object:
+        return await message.answer(text)
+
+    await send_html_with_fallback(
+        send_html=_send_html,
+        send_plain=_send_plain,
+        label=f"usage {key}",
+    )
 
 
 @router.message(Command("recycle"))

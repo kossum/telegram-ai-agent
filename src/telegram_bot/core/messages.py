@@ -52,6 +52,20 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.tmux_not_active": "No active tmux session in this topic",
         "ui.recycle_done": "♻️ Runtime restarted",
         "ui.recycle_failed": "❌ Couldn't restart the runtime. Try again in a moment.",
+        "ui.usage_header": "📊 Context window usage",
+        "ui.usage_model": "Model: <b>{model}</b>",
+        "ui.usage_context_pct": (
+            "Context: <code>{used}</code> / <code>{max}</code> tokens ({pct})"
+        ),
+        "ui.usage_context_over": (
+            "⚠️ Context: <code>{used}</code> / <code>{max}</code> tokens ({pct}) — over the limit"
+        ),
+        "ui.usage_context_raw": "Context: <code>{used}</code> tokens",
+        "ui.usage_totals": ("Last reply: {out} · this turn: {turn} · session total: {session}"),
+        "ui.usage_compactions": "Compactions: {count}",
+        "ui.usage_no_session": ("No session here yet — send me a message first."),
+        "ui.usage_not_codex": ("Usage tracking is available for the Codex engine."),
+        "ui.usage_not_found": ("Couldn't find the session transcript yet. Try again in a moment."),
         "ui.engine_starting": (
             "🔄 {engine} is starting up — please wait a few seconds before sending."
         ),
@@ -324,6 +338,22 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.recycle_failed": (
             "❌ Не удалось перезапустить runtime. Попробуй ещё раз через пару секунд."
         ),
+        "ui.usage_header": "📊 Использование контекста",
+        "ui.usage_model": "Модель: <b>{model}</b>",
+        "ui.usage_context_pct": (
+            "Контекст: <code>{used}</code> / <code>{max}</code> токенов ({pct})"
+        ),
+        "ui.usage_context_over": (
+            "⚠️ Контекст: <code>{used}</code> / <code>{max}</code> токенов ({pct}) — превышен лимит"
+        ),
+        "ui.usage_context_raw": "Контекст: <code>{used}</code> токенов",
+        "ui.usage_totals": (
+            "Последний ответ: {out} · текущий ход: {turn} · всего в сессии: {session}"
+        ),
+        "ui.usage_compactions": "Компакций: {count}",
+        "ui.usage_no_session": ("Сессии пока нет — сначала отправь мне сообщение."),
+        "ui.usage_not_codex": ("Учёт использования доступен для Codex."),
+        "ui.usage_not_found": ("Транскрипт сессии пока не найден. Повтори через минуту."),
         "ui.engine_starting": (
             "🔄 {engine} запускается — подожди несколько секунд перед отправкой."
         ),

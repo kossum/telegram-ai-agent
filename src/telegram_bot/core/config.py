@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     codex_update_timeout_sec: float = 180
     codex_update_cooldown_sec: float = 86400
     codex_auto_update_enabled: bool = True
+    # Max context window (tokens) for the active Codex model. Used by the
+    # /usage command to show a percentage. Override via CODEX_CONTEXT_WINDOW_MAX.
+    codex_context_window_max: int | None = None
 
     @classmethod
     def settings_customise_sources(
