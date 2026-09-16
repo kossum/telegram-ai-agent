@@ -64,7 +64,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.usage_totals": ("Last reply: {out} · this turn: {turn} · session total: {session}"),
         "ui.usage_compactions": "Compactions: {count}",
         "ui.usage_no_session": ("No session here yet — send me a message first."),
-        "ui.usage_not_codex": ("Usage tracking is available for the Codex engine."),
+        "ui.usage_not_codex": (
+            "Usage tracking is available for the Codex and Claude Code engines."
+        ),
         "ui.usage_not_found": ("Couldn't find the session transcript yet. Try again in a moment."),
         "ui.engine_starting": (
             "🔄 {engine} is starting up — please wait a few seconds before sending."
@@ -352,7 +354,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         ),
         "ui.usage_compactions": "Компакций: {count}",
         "ui.usage_no_session": ("Сессии пока нет — сначала отправь мне сообщение."),
-        "ui.usage_not_codex": ("Учёт использования доступен для Codex."),
+        "ui.usage_not_codex": (
+            "Учёт использования доступен для Codex и Claude Code."
+        ),
         "ui.usage_not_found": ("Транскрипт сессии пока не найден. Повтори через минуту."),
         "ui.engine_starting": (
             "🔄 {engine} запускается — подожди несколько секунд перед отправкой."

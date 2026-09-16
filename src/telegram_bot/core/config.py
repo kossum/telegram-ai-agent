@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     # Max context window (tokens) for the active Codex model. Used by the
     # /usage command to show a percentage. Override via CODEX_CONTEXT_WINDOW_MAX.
     codex_context_window_max: int | None = None
+    # Max context window (tokens) for the active Claude model. Used by the
+    # /usage command to show a percentage. Override via CLAUDE_CONTEXT_WINDOW_MAX.
+    # Falls back to the per-model default (200k) when unset.
+    claude_context_window_max: int | None = None
 
     @classmethod
     def settings_customise_sources(

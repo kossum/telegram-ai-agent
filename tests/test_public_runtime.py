@@ -620,3 +620,67 @@ def test_context_usage_from_rollout(tmp_path, monkeypatch) -> None:
     assert "1,000" in text
     assert "2,000" in text
     assert "Compactions: 1" in text
+
+
+def test_claude_context_usage_from_transcript(tmp_path) -> None:
+    from telegram_bot.core.services.context_usage import (
+        format_usage,
+        get_claude_context_usage,
+        resolve_claude_max_context_tokens,
+    )
+
+    sid = "0f2f1a3c-1234-4a67-8b9c-0d1e2f3a4b5c"
+    proj = tmp_path / ".claude" / "projects" / "-app-workspace"
+    proj.mkdir(parents=True)
+    transcript = proj / f"{sid}.jsonl"
+    user_rec = {"type": "user", "message": {"role": "user", "content": "hi"}}
+    asst1 = {
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "model": "claude-sonnet-4-20250514",
+            "usage": {
+                "input_tokens": 100,
+                "cache_read_input_tokens": 400,
+                "cache_creation_input_tokens": 50,
+                "output_tokens": 20,
+            },
+        },
+    }
+    summary_rec = {"type": "summary", "summary": "compacted prior turns"}
+    asst2 = {
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "model": "claude-sonnet-4-20250514",
+            "usage": {
+                "input_tokens": 200,
+                "cache_read_input_tokens": 800,
+                "cache_creation_input_tokens": 100,
+                "output_tokens": 40,
+            },
+        },
+        "timestamp": "2026-09-16T10:00:00Z",
+    }
+    lines = "".join(
+        json.dumps(r) + "\n" for r in (user_rec, asst1, summary_rec, asst2)
+    )
+    transcript.write_text(lines)
+
+    usage = get_claude_context_usage(sid, cwd="/app/workspace", home=tmp_path)
+    assert usage is not None
+    assert usage.session_id == sid
+    assert usage.model == "claude-sonnet-4-20250514"
+    assert usage.context_tokens == 1100
+    assert usage.last_turn_output_tokens == 40
+    assert usage.turn_total_tokens == 1140
+    assert usage.thread_total_tokens == 1710
+    assert usage.compaction_count == 1
+
+    assert resolve_claude_max_context_tokens(None, usage.model) == 200000
+    assert resolve_claude_max_context_tokens(1000, usage.model) == 1000
+    assert resolve_claude_max_context_tokens(None, None) is None
+
+    text = format_usage(usage, 2000)
+    assert "55%" in text
+    assert "1,100" in text

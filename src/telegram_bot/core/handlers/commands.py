@@ -31,11 +31,14 @@ from telegram_bot.core.keyboards import (
     topic_keyboard,
 )
 from telegram_bot.core.messages import reset_lang_cache, t
-from telegram_bot.core.services.claude import SessionManager
+from telegram_bot.core.services.claude import SessionData, SessionManager
 from telegram_bot.core.services.codex_update import CodexUpdateResult, CodexUpdateService
 from telegram_bot.core.services.context_usage import (
+    ContextUsage,
+    get_claude_context_usage,
     format_usage,
     get_codex_context_usage,
+    resolve_claude_max_context_tokens,
     resolve_max_context_tokens,
 )
 from telegram_bot.core.services.message_queue import MessageQueue
@@ -362,26 +365,44 @@ async def handle_mcpstatus(message: Message, tmux_manager: TmuxManager) -> None:
     await message.answer(f"<pre>{status}</pre>", parse_mode="HTML")
 
 
+def _resolve_usage_for_session(
+    session: SessionData, settings: Settings
+) -> tuple[ContextUsage | None, int | None]:
+    """(usage, max_tokens) for the session's engine, or (None, None)."""
+    if session.engine == "claude":
+        if not session.session_id:
+            return None, None
+        usage = get_claude_context_usage(session.session_id, session.cwd or None)
+        max_tokens = resolve_claude_max_context_tokens(
+            settings.claude_context_window_max,
+            usage.model if usage is not None else None,
+        )
+        return usage, max_tokens
+    if session.engine == "codex":
+        if not session.session_id:
+            return None, None
+        usage = get_codex_context_usage(session.session_id)
+        max_tokens = resolve_max_context_tokens(settings.codex_context_window_max)
+        return usage, max_tokens
+    return None, None
+
+
 @router.message(Command("usage"))
 async def handle_usage(
     message: Message,
     session_manager: SessionManager,
     settings: Settings,
 ) -> None:
-    """Report the current context-window usage of this chat's Codex session."""
+    """Report the current context-window usage of this chat's agent session."""
     key = channel_key(message)
     session = session_manager._get_session(key)
-    if session.engine != "codex":
-        await message.answer(t("ui.usage_not_codex"))
-        return
-    if not session.session_id:
-        await message.answer(t("ui.usage_no_session"))
-        return
-    usage = get_codex_context_usage(session.session_id)
+    usage, max_tokens = _resolve_usage_for_session(session, settings)
     if usage is None:
-        await message.answer(t("ui.usage_not_found"))
+        await message.answer(
+            t("ui.usage_no_session") if not session.session_id
+            else t("ui.usage_not_found")
+        )
         return
-    max_tokens = resolve_max_context_tokens(settings.codex_context_window_max)
     text = format_usage(usage, max_tokens)
 
     async def _send_html() -> object:

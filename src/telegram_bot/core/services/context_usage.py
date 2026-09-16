@@ -1,9 +1,10 @@
-"""Current-session context-window usage for Codex.
+"""Current-session context-window usage for Codex and Claude Code.
 
-Reads the Codex rollout jsonl for the active session and reports how many
-tokens the current context occupies, plus cumulative turn and session
-totals. The max context window is resolved from an explicit override, then
-from the Codex config (``model_context_window``), else left unset.
+Reads the transcript for the active session (Codex rollout jsonl or
+Claude Code project jsonl) and reports how many tokens the current
+context occupies, plus cumulative turn and session totals. The max
+context window is resolved from an explicit override, then from the
+Codex config (``model_context_window``) or a per-model default.
 """
 
 from __future__ import annotations
@@ -15,10 +16,13 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from telegram_bot.core.tui.paths import _SESSION_ID_RE, transcript_path
+
 _CODEX_SESSION_ID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}"
     r"-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 )
+_CLAUDE_DEFAULT_WINDOW = 200_000
 _CONTEXT_WINDOW_RE = re.compile(
     r"^\s*model_context_window\s*="
     r"\s*(\d+)\s*(?:#.*)?$"
@@ -243,3 +247,127 @@ def format_usage(usage: ContextUsage, max_tokens: int | None) -> str:
     )
     lines.append(t("ui.usage_compactions", count=f"{usage.compaction_count}"))
     return "\n".join(lines)
+
+
+def _find_claude_transcript(
+    session_id: str, cwd: str | None, home: Path
+) -> Path | None:
+    """Locate the CC transcript jsonl for a session id (newest first)."""
+    if not _SESSION_ID_RE.fullmatch(session_id or ""):
+        return None
+    if cwd:
+        path = transcript_path(cwd, session_id, home=home)
+        if path.is_file():
+            return path
+    root = home / ".claude" / "projects"
+    if not root.exists():
+        return None
+    matches = list(root.glob(f"*/{session_id}.jsonl"))
+    if not matches:
+        return None
+    return max(matches, key=_safe_mtime)
+
+
+def _claude_usage_of(data: dict[str, object]) -> tuple[int, int, str | None] | None:
+    """(context_tokens, turn_total_tokens, model) from an assistant record."""
+    message = data.get("message")
+    if not isinstance(message, dict):
+        return None
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    context = int(usage.get("input_tokens", 0))
+    context += int(usage.get("cache_read_input_tokens", 0))
+    context += int(usage.get("cache_creation_input_tokens", 0))
+    output = int(usage.get("output_tokens", 0))
+    model = message.get("model")
+    model = model if isinstance(model, str) else None
+    return context, context + output, model
+
+
+def _count_claude_compactions(path: Path) -> int:
+    """Count compact-summary entries persisted in the transcript."""
+    count = 0
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if '"summary"' not in line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(data, dict) and data.get("type") == "summary":
+                    count += 1
+    except OSError:
+        pass
+    return count
+
+
+def _sum_claude_thread_tokens(path: Path) -> int:
+    """Cumulative assistant tokens across the whole transcript."""
+    total = 0
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if '"assistant"' not in line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                parsed = _claude_usage_of(data)
+                if parsed is not None:
+                    total += parsed[1]
+    except OSError:
+        pass
+    return total
+
+
+def get_claude_context_usage(
+    session_id: str, cwd: str | None = None, home: Path | None = None
+) -> ContextUsage | None:
+    """Return the current context-window usage for a Claude Code session."""
+    home = home or Path.home()
+    path = _find_claude_transcript(session_id, cwd, home)
+    if path is None:
+        return None
+    last_record: dict[str, object] | None = None
+    last_usage: tuple[int, int, str | None] | None = None
+    for data in _iter_tail(path):
+        if data.get("type") != "assistant":
+            continue
+        parsed = _claude_usage_of(data)
+        if parsed is not None:
+            last_record, last_usage = data, parsed
+        if last_record is not None:
+            break
+    if last_record is None or last_usage is None:
+        return None
+    context, turn_total, model = last_usage
+    raw_ts = last_record.get("timestamp")
+    timestamp = raw_ts if isinstance(raw_ts, str) else None
+    return ContextUsage(
+        session_id=session_id,
+        model=model,
+        context_tokens=context,
+        turn_total_tokens=turn_total,
+        thread_total_tokens=_sum_claude_thread_tokens(path),
+        last_turn_output_tokens=turn_total - context,
+        timestamp=timestamp,
+        compaction_count=_count_claude_compactions(path),
+    )
+
+
+def resolve_claude_max_context_tokens(
+    override: int | None = None, model: str | None = None
+) -> int | None:
+    """Resolve the Claude max context: override, then per-model default."""
+    if override is not None and override > 0:
+        return override
+    if not model:
+        return None
+    lowered = model.lower()
+    if any(key in lowered for key in ("sonnet", "opus", "haiku")):
+        return _CLAUDE_DEFAULT_WINDOW
+    return None
