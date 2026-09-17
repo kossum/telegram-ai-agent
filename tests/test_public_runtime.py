@@ -276,6 +276,21 @@ def test_public_agent_environment_is_sanitized() -> None:
     assert "UNRELATED_SECRET" not in env
 
 
+def test_public_agent_environment_honors_extra_env_names() -> None:
+    base = {
+        "HOME": "/home/test",
+        "PATH": "/usr/bin",
+        "TZ": "America/Phoenix",
+        "UNRELATED_SECRET": "must-not-leak",
+    }
+    assert "TZ" not in agent_process_env(base_env=base)
+    extra = agent_process_env(
+        base_env={**base, "AGENT_EXTRA_ENV": "TZ"}
+    )
+    assert extra["TZ"] == "America/Phoenix"
+    assert "UNRELATED_SECRET" not in extra
+
+
 def test_public_prompt_modes_have_bot_mcp_tools() -> None:
     required = {
         "mcp__bot__send_message",

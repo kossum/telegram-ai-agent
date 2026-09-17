@@ -178,6 +178,9 @@ Notes:
 - `TELEGRAM_BOT_TOKEN`: create a bot in `@BotFather`.
 - `ALLOWED_USER_IDS`: JSON array of Telegram user IDs allowed to use the bot.
 - `BOT_LANG`: `en` or `ru`. Restart the bot after changing it.
+- `AGENT_EXTRA_ENV`: comma-separated env names passed through to the
+  agent sessions launched in tmux (e.g. `AGENT_EXTRA_ENV=TZ` so the
+  `TZ` value from `.env` reaches the agent process).
 - `PROJECT_ROOT`: the standard single-checkout root. Leave `APP_ROOT` and
   `AGENT_WORKSPACE_ROOT` empty for a normal installation.
 - `APP_ROOT` / `AGENT_WORKSPACE_ROOT`: optional advanced split layout. The

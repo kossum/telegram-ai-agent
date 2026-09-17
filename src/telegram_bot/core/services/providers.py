@@ -204,6 +204,17 @@ def extend_agent_env_allowlist(names: set[str]) -> None:
     _CODEX_ENV_ALLOWLIST.update(names)
 
 
+def extra_agent_env_names(source: dict[str, str]) -> set[str]:
+    """Extra non-secret names from the ``AGENT_EXTRA_ENV`` override.
+
+    Comma-separated list of env names passed through to launched agents.
+    Lets a deployment extend the allowlist from its own .env without
+    code changes (e.g. ``AGENT_EXTRA_ENV=TZ`` to honor the bot TZ).
+    """
+    raw = source.get("AGENT_EXTRA_ENV", "")
+    return {n.strip() for n in raw.split(",") if n.strip()}
+
+
 def agent_process_env(
     *,
     binary: str | Path | None = None,
@@ -211,7 +222,12 @@ def agent_process_env(
 ) -> dict[str, str]:
     """Build the non-secret environment shared by bot-launched agents."""
     source = os.environ if base_env is None else base_env
-    env = {key: value for key, value in source.items() if key in _CODEX_ENV_ALLOWLIST}
+    extra = extra_agent_env_names(source)
+    env = {
+        key: value
+        for key, value in source.items()
+        if key in _CODEX_ENV_ALLOWLIST or key in extra
+    }
     if binary is not None:
         bin_dir = Path(binary).expanduser().parent
         current_path = env.get("PATH", os.defpath)
@@ -277,6 +293,8 @@ def codex_env_prefix(*, codex_bin: str | Path | None = None) -> list[str]:
         *_AGENT_APP_ENV,
     ]
     ordered_keys = [*inherited_keys, *keys]
+    extra = sorted(extra_agent_env_names(os.environ))
+    ordered_keys = list(dict.fromkeys([*ordered_keys, *extra]))
     return ["env", "-i", *(f"{key}={env[key]}" for key in ordered_keys if key in env)]
 
 
