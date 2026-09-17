@@ -115,6 +115,7 @@ class SessionData:
     thread_id: int | None = None
     engine: str = "claude"
     model: str | None = None
+    compact_window_override: int | None = None
 
 
 @dataclass(frozen=True)
@@ -522,6 +523,10 @@ class SessionManager:
         if session.model:
             # Insert before trailing "-" so the stdin marker remains last.
             argv[-1:-1] = ["--model", session.model]
+        if session.compact_window_override is not None:
+            window = session.compact_window_override
+            session.compact_window_override = None
+            argv[-1:-1] = ["-c", f"model_context_window={window}"]
         return ExecCommand(
             argv=argv,
             cwd=cwd,

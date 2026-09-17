@@ -561,6 +561,42 @@ def test_usage_handler_exists() -> None:
     assert commands.handle_usage is not None
 
 
+def test_compact_command_is_public() -> None:
+    names = {c.command for c in build_bot_commands("en")}
+    assert "compact" in names
+
+
+def test_compact_handler_exists() -> None:
+    assert commands.handle_compact is not None
+
+
+def test_compact_routes_to_bot_not_tui() -> None:
+    from telegram_bot.core.tui.routing import route_slash_command
+
+    assert route_slash_command("/compact") == "bot"
+    assert route_slash_command("/compact keep only the API notes") == "bot"
+    assert route_slash_command("/model sonnet") == "tui"
+
+
+def test_compact_turn_window_floor() -> None:
+    from telegram_bot.core.services.context_usage import resolve_compact_turn_window
+
+    assert resolve_compact_turn_window(None) == 49152
+    assert resolve_compact_turn_window(30000) == 49152
+    assert resolve_compact_turn_window(-5) == 49152
+    assert resolve_compact_turn_window(65536) == 65536
+
+
+def test_compaction_counter_counts_compacted_records(tmp_path) -> None:
+    from telegram_bot.core.services.context_usage import _count_compactions
+
+    rollout = tmp_path / "rollout.jsonl"
+    rec1 = json.dumps({"type": "compacted", "payload": {"message": "summary"}})
+    rec2 = json.dumps({"type": "response_item", "payload": {"type": "message"}})
+    rollout.write_text(rec1 + "\n" + rec2 + "\n")
+    assert _count_compactions(rollout) == 1
+
+
 def test_context_usage_from_rollout(tmp_path, monkeypatch) -> None:
     from telegram_bot.core.services.context_usage import (
         format_usage,

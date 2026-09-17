@@ -20,6 +20,10 @@ from aiogram.types.inaccessible_message import InaccessibleMessage
 
 from telegram_bot.core.config import Settings
 from telegram_bot.core.handlers.forward import ForwardBatcher
+from telegram_bot.core.handlers.streaming import (
+    ensure_exec_mode_ready,
+    send_to_tmux_if_active,
+)
 from telegram_bot.core.keyboards import (
     RESUME_PAGE_SIZE,
     _format_age,
@@ -39,6 +43,7 @@ from telegram_bot.core.services.context_usage import (
     format_usage,
     get_codex_context_usage,
     resolve_claude_max_context_tokens,
+    resolve_compact_turn_window,
     resolve_max_context_tokens,
 )
 from telegram_bot.core.services.message_queue import MessageQueue
@@ -416,6 +421,58 @@ async def handle_usage(
         send_plain=_send_plain,
         label=f"usage {key}",
     )
+
+
+@router.message(Command("compact"))
+async def handle_compact(
+    message: Message,
+    session_manager: SessionManager,
+    message_queue: MessageQueue,
+    tmux_manager: TmuxManager,
+    topic_config: TopicConfig,
+    settings: Settings,
+) -> None:
+    """Manually compact this chat's agent session context."""
+    key = channel_key(message)
+    session = session_manager._get_session(key)
+    if not session.session_id:
+        await message.answer(t("ui.usage_no_session"))
+        return
+    if message_queue.is_busy(key) or tmux_manager.is_processing(key):
+        await message.answer(t("ui.exec_mode_busy"))
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    focus = parts[1].strip() if len(parts) > 1 else ""
+    prompt = "/compact" + (f" {focus}" if focus else "")
+
+    if topic_config.get_topic(key[1]).exec_mode == "tmux":
+        if not await ensure_exec_mode_ready(
+            key, topic_config, tmux_manager, session_manager, message
+        ):
+            return
+        if await send_to_tmux_if_active(key, prompt, message, tmux_manager):
+            return
+
+    if session.engine == "codex":
+        # Subprocess path: run this one turn under a small window override
+        # so the engine's built-in compaction fires (context > window).
+        window = resolve_compact_turn_window(settings.codex_compact_turn_window)
+        usage = get_codex_context_usage(session.session_id)
+        if usage is None or usage.context_tokens < window:
+            await message.answer(t("ui.compact_under_threshold"))
+            return
+        session.compact_window_override = window
+
+    message_queue.enqueue(
+        key,
+        prompt,
+        message.message_id,
+        message,
+        target_session_id=session.session_id,
+        suppress_notification=tmux_manager.is_active(key),
+    )
+    await message.answer(t("ui.compact_started"))
 
 
 @router.message(Command("recycle"))

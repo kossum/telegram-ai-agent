@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     # /usage command to show a percentage. Override via CLAUDE_CONTEXT_WINDOW_MAX.
     # Falls back to the per-model default (200k) when unset.
     claude_context_window_max: int | None = None
+    # Window (tokens) the one-shot /compact turn runs under in subprocess
+    # mode, forcing the Codex engine's built-in compaction. Values below
+    # 48K count as 48K. Override via CODEX_COMPACT_TURN_WINDOW.
+    codex_compact_turn_window: int | None = None
 
     @classmethod
     def settings_customise_sources(

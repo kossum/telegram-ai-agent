@@ -111,6 +111,14 @@ def _count_compactions(path: Path) -> int:
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
             for line in handle:
+                if '"type":"compacted"' in line or '"type": "compacted"' in line:
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(data, dict) and data.get("type") == "compacted":
+                        count += 1
+                    continue
                 if _COMPACT_KIND not in line:
                     continue
                 try:
@@ -213,6 +221,16 @@ def resolve_max_context_tokens(override: int | None = None, home: Path | None = 
         if match:
             return int(match.group(1))
     return None
+
+
+_COMPACT_TURN_WINDOW_FLOOR = 49_152  # 48 KiB tokens
+
+
+def resolve_compact_turn_window(override: int | None = None) -> int:
+    """Window for the /compact turn: env override, floored at 48K."""
+    if override is not None and override > 0:
+        return max(override, _COMPACT_TURN_WINDOW_FLOOR)
+    return _COMPACT_TURN_WINDOW_FLOOR
 
 
 def format_usage(usage: ContextUsage, max_tokens: int | None) -> str:

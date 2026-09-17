@@ -1,8 +1,9 @@
 """Slash-command routing: bot-handled vs forwarded to tmux TUI.
 
-Commands listed in `BOT_RESERVED_COMMANDS` are handled server-side and NOT
-forwarded to the Claude CLI pane. Everything else (e.g. `/compact`, `/model
-sonnet`, `/mcp`) goes to the TUI.
+Commands listed in `BOT_RESERVED_COMMANDS` are handled by the bot, not
+forwarded to the CLI pane. `/compact` is the exception: when the topic runs
+in tmux exec mode the bot re-forwards it to the TUI, whose engine owns the
+compaction. Everything else (e.g. `/model sonnet`, `/mcp`) goes to the TUI.
 
 Note: `/stop` was removed per Decision 12 — use `/cancel` or the in-bot
 Stop button instead. `/tail` is handled by tail.py's aiogram Command handler
@@ -18,6 +19,7 @@ BOT_RESERVED_COMMANDS = frozenset(
         "/start",
         "/new",
         "/clear",
+        "/compact",
         "/mode",
         "/engine",
         "/resume",

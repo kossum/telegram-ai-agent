@@ -68,6 +68,8 @@ MESSAGES: dict[str, dict[str, str]] = {
             "Usage tracking is available for the Codex and Claude Code engines."
         ),
         "ui.usage_not_found": ("Couldn't find the session transcript yet. Try again in a moment."),
+        "ui.compact_started": "Compacting the session context…",
+        "ui.compact_under_threshold": ("Already under the 48K threshold — nothing to compact."),
         "ui.engine_starting": (
             "🔄 {engine} is starting up — please wait a few seconds before sending."
         ),
@@ -358,6 +360,8 @@ MESSAGES: dict[str, dict[str, str]] = {
             "Учёт использования доступен для Codex и Claude Code."
         ),
         "ui.usage_not_found": ("Транскрипт сессии пока не найден. Повтори через минуту."),
+        "ui.compact_started": "Компактизация контекста сессии…",
+        "ui.compact_under_threshold": "Контекст уже ниже порога 48K — компактовать нечего.",
         "ui.engine_starting": (
             "🔄 {engine} запускается — подожди несколько секунд перед отправкой."
         ),
