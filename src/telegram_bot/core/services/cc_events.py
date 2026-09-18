@@ -78,29 +78,75 @@ def mcp_server_event(namespace: str) -> StreamEvent:
     return StreamEvent("mcp", f"🔌 MCP: {server}")
 
 
-def _codex_error_text(err: object) -> str:
-    """Human-readable text from a Codex `task_complete.error` payload.
+# Well-known Codex/HTTP error `type` names -> status code. Used when the
+# error object carries a type but no explicit numeric `code`.
+_STATUS_FROM_TYPE = {
+    "badrequesterror": "400",
+    "unauthorizederror": "401",
+    "forbiddenerror": "403",
+    "notfounderror": "404",
+    "toomanyrequestser": "429",
+    "internalservererror": "500",
+    "badgatewayerror": "502",
+    "serviceunavailableerror": "503",
+}
+
+
+def _status_from_node(node: dict[str, object] | None) -> str | None:
+    """HTTP status from an error node: numeric `code`, else a known `type`."""
+    if not isinstance(node, dict):
+        return None
+    code = node.get("code")
+    if code is not None and str(code).isdigit():
+        return str(code)
+    typ = node.get("type")
+    if isinstance(typ, str):
+        return _STATUS_FROM_TYPE.get(typ.lower())
+    return None
+
+
+def _codex_error_parts(err: object) -> tuple[str, str | None]:
+    """(message, status) from a Codex `task_complete.error` payload.
 
     The message is double-JSON-encoded: a JSON string wrapping the real
-    `{"error": {"message": ...}}` object. Unwind both layers; fall back to
-    the raw string when either layer is not valid JSON.
+    `{"error": {"message", "type", "code"}}` object. Unwind both layers;
+    the status comes from the object's `code` (falling back to a known
+    `type` name). Falls back to the raw string when not valid JSON.
     """
     if not isinstance(err, dict):
-        return ""
+        return "", None
     msg = err.get("message")
     if not isinstance(msg, str) or not msg:
-        return ""
+        return "", None
     try:
         inner = json.loads(msg)
     except (ValueError, TypeError):
-        return msg
-    if isinstance(inner, dict):
-        inner = inner.get("error", inner)
-    if isinstance(inner, dict):
-        real = inner.get("message")
+        return msg, None
+    node = inner if isinstance(inner, dict) else None
+    if isinstance(node, dict):
+        child = node.get("error")
+        if isinstance(child, dict):
+            node = child
+    status = _status_from_node(node)
+    if isinstance(node, dict):
+        real = node.get("message")
         if isinstance(real, str) and real:
-            return real
-    return msg
+            return real, status
+    return msg, status
+
+
+def _codex_error_text(err: object) -> str:
+    """Warning-prefixed display text for a Codex `task_complete` error.
+
+    `⚠️ (400) ...` when the error carries an HTTP status, else plain
+    `⚠️ ...` (e.g. the backend was unreachable and no status is known).
+    """
+    message, status = _codex_error_parts(err)
+    if not message:
+        return ""
+    if status:
+        return f"⚠️ ({status}) {message}"
+    return f"⚠️ {message}"
 
 
 # --- Smart file path detection for Read/Write/Edit ---

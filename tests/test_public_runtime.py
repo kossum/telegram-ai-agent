@@ -813,3 +813,36 @@ def test_repair_poisoned_rollout(tmp_path, monkeypatch) -> None:
 
     assert repair_poisoned_rollout(sid, home=tmp_path) == 0
     assert repair_poisoned_rollout("not-a-session-id", home=tmp_path) == 0
+
+
+def test_codex_error_text_status_prefix() -> None:
+    from telegram_bot.core.services.cc_events import _codex_error_text
+
+    e400 = {
+        "message": json.dumps(
+            {
+                "error": {
+                    "message": "Unterminated string starting at: line 1 column 9 (char 8)",
+                    "type": "BadRequestError",
+                    "param": None,
+                    "code": 400,
+                }
+            }
+        )
+    }
+    assert _codex_error_text(e400) == (
+        "\u26a0\ufe0f (400) Unterminated string starting at: line 1 column 9 (char 8)"
+    )
+
+    no_status = {"message": "failed to reach model server"}
+    assert _codex_error_text(no_status) == "\u26a0\ufe0f failed to reach model server"
+
+    type_only = {
+        "message": json.dumps(
+            {"error": {"message": "boom", "type": "InternalServerError", "code": None}}
+        )
+    }
+    assert _codex_error_text(type_only) == "\u26a0\ufe0f (500) boom"
+
+    assert _codex_error_text(None) == ""
+    assert _codex_error_text({"message": ""}) == ""
