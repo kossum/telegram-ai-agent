@@ -92,6 +92,39 @@ __all__ = [
 _POLL_SEC = 30.0  # readline poll interval for inactivity check (not user-facing)
 _MODEL_OVERRIDE_RE = re.compile(r"^[A-Za-z0-9._:-]{1,80}$")
 
+# Last Codex `task_complete` error text for the running stream. Set while
+# reading the stream, consumed by `_run_cc_stream` to surface the real error
+# when the process exits cleanly without writing a final message.
+captured_codex_error: str = ""
+
+
+def _set_captured_codex_error(text: str) -> None:
+    global captured_codex_error
+    captured_codex_error = text
+
+
+def _noop_stream_event(_event: StreamEvent) -> None:
+    """No-op stream callback used by the non-streaming `send` wrapper."""
+
+
+NOOP_STREAM_EVENT = _noop_stream_event
+
+
+def _describe_stream_error(last_error: Exception | None) -> str:
+    """Human-facing text for a fully failed CC stream.
+
+    Prefer the real error captured from the stream (e.g. a vLLM 400
+    body) so the user sees why the turn died; fall back to a short
+    description of the exception, then to the generic message.
+    """
+    if captured_codex_error:
+        return captured_codex_error
+    if last_error is not None:
+        msg = str(last_error).strip()
+        if msg:
+            return msg
+    return t("ui.error_generic")
+
 
 def _valid_model_override(model: object) -> str | None:
     if not isinstance(model, str):
@@ -524,9 +557,13 @@ class SessionManager:
             # Insert before trailing "-" so the stdin marker remains last.
             argv[-1:-1] = ["--model", session.model]
         if session.compact_window_override is not None:
-            window = session.compact_window_override
-            session.compact_window_override = None
-            argv[-1:-1] = ["-c", f"model_context_window={window}"]
+            # Not consumed here — send_stream clears it after the
+            # call ends, so retries within the call reuse the small
+            # window that forces the engine to compact.
+            argv[-1:-1] = [
+                "-c",
+                f"model_context_window={session.compact_window_override}",
+            ]
         return ExecCommand(
             argv=argv,
             cwd=cwd,
@@ -855,6 +892,22 @@ class SessionManager:
                 file_text = ""
             if file_text:
                 result_text = file_text
+            elif process.returncode == 0 and captured_codex_error:
+                # Clean exit but the turn died on a server error (e.g. a 400).
+                # Keep the session so the caller can resume the last good turn.
+                logger.info(
+                    "Codex turn ended with server error: %s",
+                    captured_codex_error[:160],
+                )
+                result_text = captured_codex_error
+                # `result_text` carries the real error. In the streaming path it
+                # is sent once as the final answer (the `result_message` event is
+                # suppressed in _read_stream to avoid a double send); in the
+                # non-streaming `send` (no event callback) it is the result.
+                cleanup_output_last_message()
+                await cleanup_runtime_mcp_processes()
+                cleanup_runtime_mcp_config()
+                return result_text
             elif process.returncode == 0:
                 logger.warning("Codex output-last-message file empty or missing")
                 cleanup_output_last_message()
@@ -987,6 +1040,7 @@ class SessionManager:
         """
         result_text = ""
         session_id: str | None = None
+        _set_captured_codex_error("")
         kill_sec = self._settings.cc_inactivity_kill_sec
         throttle_sec = self._settings.cc_agent_progress_throttle_sec
         active_agents: dict[str, str] = {}  # tool_use_id → description
@@ -1032,6 +1086,9 @@ class SessionManager:
                 events = parsed.events
                 new_sid = parsed.session_id
                 event_type = "codex"
+                for ev in events:
+                    if ev.type == "result_message" and ev.content and ev.content != result_text:
+                        _set_captured_codex_error(ev.content)
             else:
                 try:
                     data = json.loads(line)
@@ -1047,6 +1104,14 @@ class SessionManager:
             for event in events:
                 if event.type == "result":
                     result_text = event.content
+                elif (
+                    event.type == "result_message" and provider == "codex" and captured_codex_error
+                ):
+                    # The error is carried as result_text (sent once as the
+                    # final answer); skip the separate event to avoid a double
+                    # delivery. The TUI tail has no captured error and still
+                    # dispatches its own `result_message`.
+                    continue
                 else:
                     await dispatch(event)
 
@@ -1134,32 +1199,33 @@ class SessionManager:
                         )
             session.cancelled = False
             last_error: Exception | None = None
+            max_attempts = max(1, self._settings.cc_stream_max_attempts)
 
-            for attempt in range(2):
-                try:
-                    result = await self._run_cc_stream(prompt, session, on_event)
-                    if session.session_id:
-                        self._channel_sessions[self._ch_key(channel_key)] = self._session_ref(
-                            session.engine,
-                            session.session_id,
-                            session.model,
+            try:
+                for attempt in range(max_attempts):
+                    try:
+                        result = await self._run_cc_stream(prompt, session, on_event)
+                        if session.session_id:
+                            self._channel_sessions[self._ch_key(channel_key)] = self._session_ref(
+                                session.engine,
+                                session.session_id,
+                                session.model,
+                            )
+                            self._save_channel_sessions()
+                        return result
+                    except CCNotFoundError:
+                        # Misconfiguration — the `claude` binary is missing from
+                        # PATH. Used to be silent; log WARNING so `journalctl -p
+                        # warning` surfaces it to the operator.
+                        logger.warning(
+                            "CCNotFoundError: `claude` binary not on PATH for channel %s",
+                            channel_key,
                         )
-                        self._save_channel_sessions()
-                    return result
-                except CCNotFoundError:
-                    # Misconfiguration — the `claude` binary is missing from
-                    # PATH. Used to be silent; log WARNING so `journalctl -p
-                    # warning` surfaces it to the operator.
-                    logger.warning(
-                        "CCNotFoundError: `claude` binary not on PATH for channel %s",
-                        channel_key,
-                    )
-                    return t("ui.cc_not_found")
-                except (CCTimeoutError, CCProcessError, CCInactivityError) as exc:
-                    last_error = exc
-                    if attempt == 0:
-                        # User pressed Stop — don't retry, preserve session
-                        if session.cancelled:
+                        return t("ui.cc_not_found")
+                    except (CCTimeoutError, CCProcessError, CCInactivityError) as exc:
+                        last_error = exc
+                        if attempt == 0 and session.cancelled:
+                            # User pressed Stop — don't retry, preserve session
                             logger.info(
                                 "CC cancelled by user, session_id preserved: %s",
                                 session.session_id,
@@ -1167,30 +1233,32 @@ class SessionManager:
                             session.process = None
                             session.cancelled = False
                             return ""
-
+                        if attempt == max_attempts - 1:
+                            # Final attempt — report the failure below.
+                            break
                         logger.info("Retrying CC stream after error: %s", exc)
                         # Kill old process before retry to prevent zombie processes
                         if session.process is not None:
                             await self._kill_process(session.process)
-                        # SIGTERM without cancel — preserve session for retry.
-                        # asyncio reports signal death as a negative returncode
-                        # (-15 for SIGTERM); 143 covers shell-wrapped exits.
-                        if isinstance(exc, CCProcessError) and exc.exit_code in (
-                            143,
-                            -signal.SIGTERM,
-                        ):
-                            logger.info(
-                                "SIGTERM, preserving session_id=%s for retry",
-                                session.session_id,
-                            )
-                        else:
-                            session.session_id = None
+                        # Preserve the session on any error so the user can
+                        # decide whether to resume it or switch manually
+                        # (SIGTERM death, server 400s, etc.).
+                        logger.info(
+                            "Preserving session_id=%s for retry",
+                            session.session_id,
+                        )
                         session.process = None
                         continue
+            finally:
+                # The /compact window override is per-call: clear it
+                # no matter how the call ends, so a later regular
+                # message does not inherit a small context window.
+                session.compact_window_override = None
 
-            logger.error("CC stream failed after retry: %s", last_error)
-            session.session_id = None  # Don't resume from failed session
-            return t("ui.error_generic")
+            logger.error("CC stream failed after %d attempt(s): %s", max_attempts, last_error)
+            # Keep the session so a reply can resume the last good turn.
+            logger.info("Keeping session_id=%s after failed stream", session.session_id)
+            return _describe_stream_error(last_error)
 
     async def send(
         self,
@@ -1203,7 +1271,7 @@ class SessionManager:
 
         """
         # Delegate to send_stream with a no-op callback
-        return await self.send_stream(channel_key, prompt, lambda _: None)
+        return await self.send_stream(channel_key, prompt, NOOP_STREAM_EVENT)
 
     async def cancel(self, channel_key: ChannelKey) -> bool:
         """Cancel a running CC process but preserve session_id for --resume.

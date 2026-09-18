@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     cc_inactivity_kill_sec: float = 3600
     cc_agent_progress_throttle_sec: float = 10
     cc_max_turns: int = 100
+    # Total attempts for one CC stream (first try + retries) before the
+    # stream is reported as failed. Default 2 = 1 retry. Set 1 to disable.
+    # Override via CC_STREAM_MAX_ATTEMPTS in .env.
+    cc_stream_max_attempts: int = 2
     session_mapping_path: str = "./session_mapping.json"
     channel_sessions_path: str = ""
     session_mapping_max_size: int = 5000  # each interaction records multiple response chunks

@@ -21,7 +21,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from telegram_bot.core.services.cc_events import StreamEvent, _tool_status
+from telegram_bot.core.services.cc_events import (
+    StreamEvent,
+    _codex_error_text,
+    _tool_status,
+    mcp_server_event,
+)
 from telegram_bot.core.services.codex_mcp import (
     build_codex_mcp_config_args,
     discover_codex_mcp_server_names,
@@ -224,9 +229,7 @@ def agent_process_env(
     source = os.environ if base_env is None else base_env
     extra = extra_agent_env_names(source)
     env = {
-        key: value
-        for key, value in source.items()
-        if key in _CODEX_ENV_ALLOWLIST or key in extra
+        key: value for key, value in source.items() if key in _CODEX_ENV_ALLOWLIST or key in extra
     }
     if binary is not None:
         bin_dir = Path(binary).expanduser().parent
@@ -319,6 +322,9 @@ class ExecCommand:
 class ExecParseResult:
     events: list[StreamEvent]
     session_id: str | None = None
+    # True when this line marks the end of the turn (task_complete). Lets the
+    # caller avoid treating a clean exit without a final message as a failure.
+    done: bool = False
 
 
 @dataclass(frozen=True)
@@ -625,7 +631,11 @@ class CodexAdapter:
                 elif isinstance(args, dict):
                     tool_input = args
                 status = self._status_for_codex_function_call(str(name), tool_input)
-                return ExecParseResult([StreamEvent("status", status)])
+                events = [StreamEvent("status", status)]
+                namespace = payload.get("namespace")
+                if isinstance(namespace, str) and namespace.startswith("mcp__"):
+                    events.append(mcp_server_event(namespace))
+                return ExecParseResult(events)
             if payload_type == "tool_search_call":
                 return ExecParseResult([StreamEvent("status", "Ищу инструмент...")])
             if payload_type == "message" and payload.get("role") == "assistant":
@@ -655,6 +665,11 @@ class CodexAdapter:
                     {"command": command} if isinstance(command, str) else None,
                 )
                 return ExecParseResult([StreamEvent("status", f"{status} (exit {exit_code})")])
+            if payload_type == "task_complete":
+                text = _codex_error_text(payload.get("error"))
+                if text:
+                    return ExecParseResult([StreamEvent("result_message", text)], done=True)
+                return ExecParseResult([StreamEvent("result", "")], done=True)
 
         item = data.get("item")
         if isinstance(item, dict):
@@ -785,6 +800,9 @@ class CodexAdapter:
                     )
                     return TuiParseResult([StreamEvent("status", f"{status} (exit {exit_code})")])
             if ptype == "task_complete":
+                text = _codex_error_text(payload.get("error"))
+                if text:
+                    return TuiParseResult([StreamEvent("result_message", text)], done=True)
                 return TuiParseResult([StreamEvent("result", "")], done=True)
 
         if (
@@ -804,8 +822,13 @@ class CodexAdapter:
                 tool_input = parsed_args if parsed_args is not None else None
             elif isinstance(args, dict):
                 tool_input = args
-            status = self._status_for_codex_function_call(str(name), tool_input)
-            return TuiParseResult([StreamEvent("status", status)])
+            events = [
+                StreamEvent("status", self._status_for_codex_function_call(str(name), tool_input))
+            ]
+            namespace = payload.get("namespace")
+            if isinstance(namespace, str) and namespace.startswith("mcp__"):
+                events.append(mcp_server_event(namespace))
+            return TuiParseResult(events)
 
         # Assistant response_item messages are intentionally ignored:
         # Codex also emits event_msg agent_message for commentary/final answers,
@@ -1046,6 +1069,15 @@ class CodexTranscriptParser:
             self._completed_turn_id = completed_id
             self._completed_final_seen = self._final_seen
             self._turn_id = None
+            text = _codex_error_text(payload.get("error"))
+            if text:
+                return TuiParseResult(
+                    [
+                        StreamEvent("result_message", text),
+                        StreamEvent("turn_end", "", turn_id=completed_id),
+                    ],
+                    done=False,
+                )
             return TuiParseResult(
                 [StreamEvent("turn_end", "", turn_id=completed_id)],
                 done=False,

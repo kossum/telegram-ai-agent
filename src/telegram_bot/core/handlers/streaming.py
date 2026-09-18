@@ -93,6 +93,9 @@ def stream_event_action(mode: StreamMode | str, event: StreamEvent) -> DeliveryA
         return "final"
     if event.type == "text":
         return "separate_progress"
+    if event.type == "mcp":
+        # Always show the MCP-server notice, regardless of stream mode.
+        return "separate_progress"
     if event.type != "status":
         return "drop"
     if mode == "minimal":
@@ -815,6 +818,8 @@ async def send_streaming_response(
                 await _send_status_silent(ctx, event.content)
             elif event.type == "text":
                 await _handle_text_event(ctx, event)
+            elif event.type == "mcp":
+                await _send_status_silent(ctx, event.content)
             return None
         if action == "final":
             await _close_turn_progress(event.turn_id)

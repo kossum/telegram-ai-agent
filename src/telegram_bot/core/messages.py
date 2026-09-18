@@ -63,6 +63,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.usage_context_raw": "Context: <code>{used}</code> tokens",
         "ui.usage_totals": ("Last reply: {out} · this turn: {turn} · session total: {session}"),
         "ui.usage_compactions": "Compactions: {count}",
+        "ui.usage_session": "Session: <code>{engine} {session_id}</code>",
         "ui.usage_no_session": ("No session here yet — send me a message first."),
         "ui.usage_not_codex": (
             "Usage tracking is available for the Codex and Claude Code engines."
@@ -355,6 +356,7 @@ MESSAGES: dict[str, dict[str, str]] = {
             "Последний ответ: {out} · текущий ход: {turn} · всего в сессии: {session}"
         ),
         "ui.usage_compactions": "Компакций: {count}",
+        "ui.usage_session": "Сессия: <code>{engine} {session_id}</code>",
         "ui.usage_no_session": ("Сессии пока нет — сначала отправь мне сообщение."),
         "ui.usage_not_codex": (
             "Учёт использования доступен для Codex и Claude Code."

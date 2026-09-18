@@ -409,6 +409,11 @@ async def handle_usage(
         )
         return
     text = format_usage(usage, max_tokens)
+    text += "\n" + t(
+        "ui.usage_session",
+        engine=session.engine,
+        session_id=session.session_id,
+    )
 
     async def _send_html() -> object:
         return await message.answer(text, parse_mode="HTML")

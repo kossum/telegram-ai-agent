@@ -14,6 +14,7 @@ Extracted from `claude.py`. Holds:
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -63,7 +64,43 @@ def _mcp_fallback(tool_name: str) -> str:
     """
     parts = tool_name.split("__")
     server = parts[1] if len(parts) > 1 and parts[1] else "mcp"
-    return f"🔌 {server}..."
+    return f"🔌 MCP: {server}"
+
+
+def mcp_server_event(namespace: str) -> StreamEvent:
+    """Persistent per-call notice: `mcp__<server>` -> "🔌 MCP: <server>".
+
+    Codex MCP tools carry their server in a `namespace` field, not a name
+    prefix, so the user-visible MCP feedback is keyed off the namespace.
+    """
+    parts = namespace.split("__")
+    server = parts[1] if len(parts) > 1 and parts[1] else "mcp"
+    return StreamEvent("mcp", f"🔌 MCP: {server}")
+
+
+def _codex_error_text(err: object) -> str:
+    """Human-readable text from a Codex `task_complete.error` payload.
+
+    The message is double-JSON-encoded: a JSON string wrapping the real
+    `{"error": {"message": ...}}` object. Unwind both layers; fall back to
+    the raw string when either layer is not valid JSON.
+    """
+    if not isinstance(err, dict):
+        return ""
+    msg = err.get("message")
+    if not isinstance(msg, str) or not msg:
+        return ""
+    try:
+        inner = json.loads(msg)
+    except (ValueError, TypeError):
+        return msg
+    if isinstance(inner, dict):
+        inner = inner.get("error", inner)
+    if isinstance(inner, dict):
+        real = inner.get("message")
+        if isinstance(real, str) and real:
+            return real
+    return msg
 
 
 # --- Smart file path detection for Read/Write/Edit ---
@@ -241,6 +278,7 @@ class StreamEvent:
         "text",
         "result",
         "result_message",
+        "mcp",
         "turn_start",
         "turn_end",
     ]
