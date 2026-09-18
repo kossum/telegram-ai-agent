@@ -26,6 +26,7 @@ from telegram_bot.core.services.cc_events import (
     _codex_error_text,
     _tool_status,
     mcp_server_event,
+    mcp_server_event_by_name,
 )
 from telegram_bot.core.services.codex_mcp import (
     build_codex_mcp_config_args,
@@ -674,6 +675,10 @@ class CodexAdapter:
         item = data.get("item")
         if isinstance(item, dict):
             item_type = item.get("type")
+            if item_type == "mcp_tool_call":
+                server = item.get("server")
+                if event_type == "item.started" and isinstance(server, str) and server:
+                    return ExecParseResult([mcp_server_event_by_name(server)])
             if item_type == "command_execution":
                 command = item.get("command")
                 exit_code = item.get("exit_code")

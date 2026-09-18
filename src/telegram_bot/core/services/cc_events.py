@@ -78,6 +78,11 @@ def mcp_server_event(namespace: str) -> StreamEvent:
     return StreamEvent("mcp", f"🔌 MCP: {server}")
 
 
+def mcp_server_event_by_name(server: str) -> StreamEvent:
+    """MCP notice from a plain server name (codex `mcp_tool_call.server`)."""
+    return StreamEvent("mcp", f"🔌 MCP: {server or 'mcp'}")
+
+
 # Well-known Codex/HTTP error `type` names -> status code. Used when the
 # error object carries a type but no explicit numeric `code`.
 _STATUS_FROM_TYPE = {

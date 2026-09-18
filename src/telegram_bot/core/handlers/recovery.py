@@ -236,7 +236,7 @@ def make_recovery_on_event(
                 await _close_progress(event.turn_id)
                 return None
             if action == "separate_progress":
-                if event.type == "status":
+                if event.type in ("status", "mcp"):
                     await _send_status_verbose(event.content)
                     return None
                 return await _send_text_or_result(event.content)

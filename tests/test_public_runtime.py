@@ -12,6 +12,7 @@ from telegram_bot.core.handlers import commands
 from telegram_bot.core.handlers.tail import handle_tail_command
 from telegram_bot.core.services import cc_modes
 from telegram_bot.core.services.bot_commands import build_bot_commands
+from telegram_bot.core.services.cc_events import mcp_server_event_by_name
 from telegram_bot.core.services.claude import SessionManager
 from telegram_bot.core.services.providers import (
     CODEX_ADAPTER,
@@ -846,3 +847,50 @@ def test_codex_error_text_status_prefix() -> None:
 
     assert _codex_error_text(None) == ""
     assert _codex_error_text({"message": ""}) == ""
+
+
+def test_codex_mcp_tool_call_emits_mcp_notice() -> None:
+    assert mcp_server_event_by_name("blender").content == "🔌 MCP: blender"
+
+    started = json.dumps(
+        {
+            "type": "item.started",
+            "item": {
+                "id": "item_x",
+                "type": "mcp_tool_call",
+                "server": "blender",
+                "tool": "get_scene_info",
+                "arguments": {},
+                "status": "in_progress",
+            },
+        }
+    )
+    evs = CODEX_ADAPTER.parse_exec_event(started).events
+    assert [e.content for e in evs if e.type == "mcp"] == ["🔌 MCP: blender"]
+
+    completed = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "item_x",
+                "type": "mcp_tool_call",
+                "server": "blender",
+                "tool": "get_scene_info",
+                "status": "completed",
+            },
+        }
+    )
+    assert [e for e in CODEX_ADAPTER.parse_exec_event(completed).events if e.type == "mcp"] == []
+
+    collab = json.dumps(
+        {
+            "type": "item.started",
+            "item": {
+                "id": "item_y",
+                "type": "collab_tool_call",
+                "server": None,
+                "status": "in_progress",
+            },
+        }
+    )
+    assert [e for e in CODEX_ADAPTER.parse_exec_event(collab).events if e.type == "mcp"] == []
