@@ -48,6 +48,7 @@ from telegram_bot.core.services.codex_mcp import (
     build_codex_mcp_config_args,
     discover_codex_mcp_server_names,
 )
+from telegram_bot.core.services.context_usage import repair_poisoned_rollout
 from telegram_bot.core.services.process_cleanup import tagged_processes, terminate_processes
 from telegram_bot.core.services.providers import (
     CODEX_ADAPTER,
@@ -149,6 +150,7 @@ class SessionData:
     engine: str = "claude"
     model: str | None = None
     compact_window_override: int | None = None
+    last_codex_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -695,6 +697,7 @@ class SessionManager:
     ) -> str:
         """Run a CC subprocess, stream events via on_event, return final result."""
         session_id = session.session_id
+        session.last_codex_error = ""
 
         if session_id is None and session.process is not None:
             await self._kill_process(session.process)
@@ -899,6 +902,7 @@ class SessionManager:
                     "Codex turn ended with server error: %s",
                     captured_codex_error[:160],
                 )
+                session.last_codex_error = captured_codex_error
                 result_text = captured_codex_error
                 # `result_text` carries the real error. In the streaming path it
                 # is sent once as the final answer (the `result_message` event is
@@ -1131,6 +1135,37 @@ class SessionManager:
 
         return result_text, session_id
 
+    def _retry_poisoned_rollout(
+        self,
+        session: SessionData,
+        attempt: int,
+        max_attempts: int,
+    ) -> bool:
+        """Repair a Codex rollout after a server-400 turn; retry.
+
+        Any 400 (truncated JSON args, two images where one is allowed,
+        a missing call_id, ...) means the model never accepted the
+        turn's output.  Those lines 400 every later request of the same
+        session, so drop the failed turns' tool calls (user messages
+        stay — they never poison a session on their own) and run the
+        same prompt again within the attempt budget.
+        """
+        if session.engine != "codex" or attempt >= max_attempts - 1:
+            return False
+        if not session.last_codex_error:
+            return False
+        repaired = repair_poisoned_rollout(session.session_id or "")
+        if not repaired:
+            return False
+        logger.info(
+            "Repaired %d poisoned function_call(s) in session %s; retrying turn (attempt %d/%d)",
+            repaired,
+            session.session_id,
+            attempt + 1,
+            max_attempts,
+        )
+        return True
+
     async def send_stream(
         self,
         channel_key: ChannelKey,
@@ -1212,6 +1247,9 @@ class SessionManager:
                                 session.model,
                             )
                             self._save_channel_sessions()
+                        if self._retry_poisoned_rollout(session, attempt, max_attempts):
+                            session.process = None
+                            continue
                         return result
                     except CCNotFoundError:
                         # Misconfiguration — the `claude` binary is missing from

@@ -284,9 +284,7 @@ def test_public_agent_environment_honors_extra_env_names() -> None:
         "UNRELATED_SECRET": "must-not-leak",
     }
     assert "TZ" not in agent_process_env(base_env=base)
-    extra = agent_process_env(
-        base_env={**base, "AGENT_EXTRA_ENV": "TZ"}
-    )
+    extra = agent_process_env(base_env={**base, "AGENT_EXTRA_ENV": "TZ"})
     assert extra["TZ"] == "America/Phoenix"
     assert "UNRELATED_SECRET" not in extra
 
@@ -713,9 +711,7 @@ def test_claude_context_usage_from_transcript(tmp_path) -> None:
         },
         "timestamp": "2026-09-16T10:00:00Z",
     }
-    lines = "".join(
-        json.dumps(r) + "\n" for r in (user_rec, asst1, summary_rec, asst2)
-    )
+    lines = "".join(json.dumps(r) + "\n" for r in (user_rec, asst1, summary_rec, asst2))
     transcript.write_text(lines)
 
     usage = get_claude_context_usage(sid, cwd="/app/workspace", home=tmp_path)
@@ -735,3 +731,85 @@ def test_claude_context_usage_from_transcript(tmp_path) -> None:
     text = format_usage(usage, 2000)
     assert "55%" in text
     assert "1,100" in text
+
+
+def test_repair_poisoned_rollout(tmp_path, monkeypatch) -> None:
+    from telegram_bot.core.services.context_usage import repair_poisoned_rollout
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    sid = "01a0a4c2-6fe5-7fd2-ba62-23f21c5b8bf3"
+    root = tmp_path / "sessions" / "2026" / "09" / "15"
+    root.mkdir(parents=True)
+    rollout = root / f"rollout-2026-09-15T11-10-01-{sid}.jsonl"
+
+    def msg(turn_id: str, text: str) -> dict:
+        return {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": text}],
+                "internal_chat_message_metadata_passthrough": {"turn_id": turn_id},
+            },
+        }
+
+    def call(turn_id: str, call_id: str, args: str) -> dict:
+        return {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": call_id,
+                "arguments": args,
+                "internal_chat_message_metadata_passthrough": {"turn_id": turn_id},
+            },
+        }
+
+    def out(turn_id: str, call_id: str) -> dict:
+        return {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": "ok",
+                "internal_chat_message_metadata_passthrough": {"turn_id": turn_id},
+            },
+        }
+
+    def done(turn_id: str, error: dict | None) -> dict:
+        payload: dict = {"type": "task_complete", "turn_id": turn_id}
+        if error is not None:
+            payload["error"] = error
+        return {"type": "event_msg", "payload": payload}
+
+    err = {"message": "Unterminated string starting at: line 1 column 9 (char 8)"}
+    records = (
+        msg("t-good", "hi"),
+        call("t-good", "call_good", '{"cmd": "ls"}'),
+        out("t-good", "call_good"),
+        done("t-good", None),
+        # Failed turn: valid JSON args, but the backend 400'd it anyway
+        # (e.g. two images where one is allowed). Must be dropped too.
+        msg("t-bad", "stuck?"),
+        call("t-bad", "call_bad", '{"images": ["a.png", "b.png"]}'),
+        out("t-bad", "call_bad"),
+        done("t-bad", err),
+    )
+    rollout.write_text("".join(json.dumps(r) + "\n" for r in records))
+
+    assert repair_poisoned_rollout(sid, home=tmp_path) == 2
+
+    kept = [json.loads(line) for line in rollout.read_text().splitlines()]
+    assert len(kept) == 6
+    turns = [
+        p.get("internal_chat_message_metadata_passthrough", {}).get("turn_id") or p.get("turn_id")
+        for p in (k["payload"] for k in kept)
+    ]
+    # The failed turn's user message survives; its calls/output do not.
+    assert turns == ["t-good", "t-good", "t-good", "t-good", "t-bad", "t-bad"]
+    good = kept[1]["payload"]
+    assert good["type"] == "function_call" and good["call_id"] == "call_good"
+    assert not any(p.get("call_id") == "call_bad" for p in (k["payload"] for k in kept))
+
+    assert repair_poisoned_rollout(sid, home=tmp_path) == 0
+    assert repair_poisoned_rollout("not-a-session-id", home=tmp_path) == 0

@@ -267,9 +267,7 @@ def format_usage(usage: ContextUsage, max_tokens: int | None) -> str:
     return "\n".join(lines)
 
 
-def _find_claude_transcript(
-    session_id: str, cwd: str | None, home: Path
-) -> Path | None:
+def _find_claude_transcript(session_id: str, cwd: str | None, home: Path) -> Path | None:
     """Locate the CC transcript jsonl for a session id (newest first)."""
     if not _SESSION_ID_RE.fullmatch(session_id or ""):
         return None
@@ -389,3 +387,92 @@ def resolve_claude_max_context_tokens(
     if any(key in lowered for key in ("sonnet", "opus", "haiku")):
         return _CLAUDE_DEFAULT_WINDOW
     return None
+
+
+# ---------------------------------------------------------------------------
+# Failed-turn repair (Codex only)
+# ---------------------------------------------------------------------------
+
+
+def _parse_payload(raw: str) -> dict[str, object] | None:
+    """Outer ``payload`` object of one rollout line, or None."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    payload = data.get("payload") if isinstance(data, dict) else None
+    return payload if isinstance(payload, dict) else None
+
+
+def _meta_turn_id(payload: dict[str, object]) -> str | None:
+    """Turn id carried in the item's passthrough metadata, if any."""
+    meta = payload.get("internal_chat_message_metadata_passthrough")
+    if isinstance(meta, dict):
+        turn_id = meta.get("turn_id")
+        if isinstance(turn_id, str):
+            return turn_id
+    return None
+
+
+def _atomic_write_lines(path: Path, lines: list[str]) -> None:
+    """Rewrite *path* from *lines* via a temp file + rename."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(
+        "".join(line + "\n" for line in lines),
+        encoding="utf-8",
+    )
+    os.replace(tmp, path)
+
+
+def repair_poisoned_rollout(session_id: str, home: Path | None = None) -> int:
+    """Drop failed turns' tool-call lines from a Codex rollout file.
+
+    When a Codex turn dies on a server 400 (truncated JSON args, two
+    images where one is allowed, a missing call_id, ...), the model
+    never accepted that turn's output.  The offending lines sit in the
+    history and can 400 every later request of the same session.  This
+    removes the function_call / function_call_output lines of every
+    turn that ended with a task_complete error, keeps the user messages
+    (they never poison a session on their own), and lets the caller
+    re-send the current prompt.  Returns the number of lines removed
+    (0 = nothing to repair).
+    """
+    if not _CODEX_SESSION_ID_RE.fullmatch(session_id or ""):
+        return 0
+    path = _find_rollout(session_id, home or Path.home())
+    if path is None:
+        return 0
+
+    rows: list[tuple[str, dict[str, object] | None]] = []
+    failed_turns: set[str] = set()
+    raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    for raw in raw_lines:
+        payload = _parse_payload(raw)
+        rows.append((raw, payload))
+        if payload is not None and payload.get("type") == "task_complete":
+            error = payload.get("error")
+            if error:
+                turn_id = payload.get("turn_id")
+                if isinstance(turn_id, str):
+                    failed_turns.add(turn_id)
+
+    if not failed_turns:
+        return 0
+
+    kept: list[str] = []
+    removed = 0
+    for raw, payload in rows:
+        if payload is None:
+            kept.append(raw)
+            continue
+        ptype = payload.get("type")
+        if ptype in ("function_call", "function_call_output") and (
+            _meta_turn_id(payload) in failed_turns
+        ):
+            removed += 1
+            continue
+        kept.append(raw)
+
+    if removed:
+        _atomic_write_lines(path, kept)
+    return removed
