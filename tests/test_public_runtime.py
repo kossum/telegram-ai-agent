@@ -783,34 +783,61 @@ def test_repair_poisoned_rollout(tmp_path, monkeypatch) -> None:
             payload["error"] = error
         return {"type": "event_msg", "payload": payload}
 
-    err = {"message": "Unterminated string starting at: line 1 column 9 (char 8)"}
+    err_400 = {
+        "message": json.dumps(
+            {
+                "error": {
+                    "message": "At most 1 image(s) may be provided in one prompt.",
+                    "type": "BadRequestError",
+                    "code": 400,
+                }
+            }
+        ),
+        "codex_error_info": "other",
+    }
+    err_500 = {
+        "message": json.dumps(
+            {
+                "error": {
+                    "message": "internal server error",
+                    "type": "InternalServerError",
+                    "code": 500,
+                }
+            }
+        ),
+    }
     records = (
         msg("t-good", "hi"),
         call("t-good", "call_good", '{"cmd": "ls"}'),
         out("t-good", "call_good"),
         done("t-good", None),
-        # Failed turn: valid JSON args, but the backend 400'd it anyway
-        # (e.g. two images where one is allowed). Must be dropped too.
+        # Failed turn: 4xx -> the model never accepted it; drop its calls.
         msg("t-bad", "stuck?"),
         call("t-bad", "call_bad", '{"images": ["a.png", "b.png"]}'),
         out("t-bad", "call_bad"),
-        done("t-bad", err),
+        done("t-bad", err_400),
+        # Server 5xx does not poison a session; its calls must survive.
+        msg("t-500", "boom"),
+        call("t-500", "call_500", '{"cmd": "sleep 1"}'),
+        out("t-500", "call_500"),
+        done("t-500", err_500),
     )
     rollout.write_text("".join(json.dumps(r) + "\n" for r in records))
 
     assert repair_poisoned_rollout(sid, home=tmp_path) == 2
 
     kept = [json.loads(line) for line in rollout.read_text().splitlines()]
-    assert len(kept) == 6
+    assert len(kept) == 10
     turns = [
         p.get("internal_chat_message_metadata_passthrough", {}).get("turn_id") or p.get("turn_id")
         for p in (k["payload"] for k in kept)
     ]
-    # The failed turn's user message survives; its calls/output do not.
-    assert turns == ["t-good", "t-good", "t-good", "t-good", "t-bad", "t-bad"]
-    good = kept[1]["payload"]
-    assert good["type"] == "function_call" and good["call_id"] == "call_good"
-    assert not any(p.get("call_id") == "call_bad" for p in (k["payload"] for k in kept))
+    # t-bad's user message+done survive; its calls are gone. t-500 is intact.
+    assert turns == ["t-good"] * 4 + ["t-bad"] * 2 + ["t-500"] * 4
+    payloads = [k["payload"] for k in kept]
+    assert not any(p.get("call_id") == "call_bad" for p in payloads)
+    assert any(p.get("call_id") == "call_good" for p in payloads)
+    assert any(p.get("call_id") == "call_500" for p in payloads)
 
     assert repair_poisoned_rollout(sid, home=tmp_path) == 0
     assert repair_poisoned_rollout("not-a-session-id", home=tmp_path) == 0

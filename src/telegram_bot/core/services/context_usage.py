@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from telegram_bot.core.services.cc_events import _codex_error_parts
 from telegram_bot.core.tui.paths import _SESSION_ID_RE, transcript_path
 
 _CODEX_SESSION_ID_RE = re.compile(
@@ -424,18 +425,30 @@ def _atomic_write_lines(path: Path, lines: list[str]) -> None:
     os.replace(tmp, path)
 
 
+def _is_4xx(err: object) -> bool:
+    """True when a ``task_complete`` error resolves to a 4xx client status.
+
+    Reuses the shared error resolver so an OpenAI-compatible ``code`` wins,
+    with the ``type`` name as fallback. No resolvable status -> False, so an
+    unknown backend does not trigger a destructive repair.
+    """
+    status = _codex_error_parts(err)[1]
+    return status is not None and status.isdigit() and 400 <= int(status) < 500
+
+
 def repair_poisoned_rollout(session_id: str, home: Path | None = None) -> int:
     """Drop failed turns' tool-call lines from a Codex rollout file.
 
-    When a Codex turn dies on a server 400 (truncated JSON args, two
-    images where one is allowed, a missing call_id, ...), the model
+    When a Codex turn dies on a client (4xx) error (truncated JSON args,
+    two images where one is allowed, a missing call_id, ...), the model
     never accepted that turn's output.  The offending lines sit in the
-    history and can 400 every later request of the same session.  This
-    removes the function_call / function_call_output lines of every
-    turn that ended with a task_complete error, keeps the user messages
-    (they never poison a session on their own), and lets the caller
-    re-send the current prompt.  Returns the number of lines removed
-    (0 = nothing to repair).
+    history and can 4xx every later request of the same session.  This
+    removes the function_call / function_call_output lines of every turn
+    that ended with a task_complete error resolving to a 4xx status,
+    keeps the user messages (they never poison a session on their own),
+    and lets the caller re-send the current prompt.  Server (5xx) errors
+    do not poison a session, so their turns are left alone.  Returns the
+    number of lines removed (0 = nothing to repair).
     """
     if not _CODEX_SESSION_ID_RE.fullmatch(session_id or ""):
         return 0
@@ -451,7 +464,7 @@ def repair_poisoned_rollout(session_id: str, home: Path | None = None) -> int:
         rows.append((raw, payload))
         if payload is not None and payload.get("type") == "task_complete":
             error = payload.get("error")
-            if error:
+            if error and _is_4xx(error):
                 turn_id = payload.get("turn_id")
                 if isinstance(turn_id, str):
                     failed_turns.add(turn_id)

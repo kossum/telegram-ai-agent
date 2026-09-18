@@ -1141,11 +1141,11 @@ class SessionManager:
         attempt: int,
         max_attempts: int,
     ) -> bool:
-        """Repair a Codex rollout after a server-400 turn; retry.
+        """Repair a Codex rollout after a client (4xx) turn; retry.
 
-        Any 400 (truncated JSON args, two images where one is allowed,
+        Any 4xx (truncated JSON args, two images where one is allowed,
         a missing call_id, ...) means the model never accepted the
-        turn's output.  Those lines 400 every later request of the same
+        turn's output.  Those lines 4xx every later request of the same
         session, so drop the failed turns' tool calls (user messages
         stay — they never poison a session on their own) and run the
         same prompt again within the attempt budget.
