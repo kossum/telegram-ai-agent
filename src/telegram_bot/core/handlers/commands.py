@@ -468,6 +468,15 @@ async def handle_compact(
             await message.answer(t("ui.compact_under_threshold"))
             return
         session.compact_window_override = window
+        # `codex exec` has no slash-command layer, so the literal
+        # "/compact" would reach the model as plain text; a small
+        # local model then wanders off mid-task, and its long tool
+        # calls are what poisoned the session. The window override
+        # already forced the engine's auto-compaction, so ask the
+        # model for a minimal confirmation instead.
+        prompt = t("ui.compact_codex_prompt")
+        if focus:
+            prompt += f" (focus: {focus})"
 
     message_queue.enqueue(
         key,
