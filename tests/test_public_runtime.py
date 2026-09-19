@@ -960,6 +960,14 @@ async def test_stream_retries_after_repairing_poisoned_rollout(tmp_path: Path, m
     session.engine = "codex"
     session.session_id = sid
 
+    # Engine detection shells out to the real CLIs; on CI neither claude
+    # nor codex is installed, so pin the engine to avoid the "no CLI"
+    # early exit before the repair logic under test is reached.
+    monkeypatch.setattr(
+        "telegram_bot.core.services.claude.choose_available_engine",
+        lambda preferred="claude": preferred if preferred in ("claude", "codex") else None,
+    )
+
     calls = 0
 
     async def fake_run_cc_stream(prompt: str, sess, on_event) -> str:
