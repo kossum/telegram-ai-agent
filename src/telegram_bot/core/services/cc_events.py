@@ -110,13 +110,27 @@ def _status_from_node(node: dict[str, object] | None) -> str | None:
     return None
 
 
+# Codex 0.155 plain-string errors embed the HTTP status in prose only
+# ("unexpected status 404 Not Found: ..."); recover it by regex.
+_UNEXPECTED_STATUS_RE = re.compile(r"unexpected status (\d{3})\b")
+
+
+def _status_from_text(text: object) -> str | None:
+    """HTTP status embedded in plain Codex error text, if any."""
+    if not isinstance(text, str) or not text:
+        return None
+    match = _UNEXPECTED_STATUS_RE.search(text)
+    return match.group(1) if match else None
+
+
 def _codex_error_parts(err: object) -> tuple[str, str | None]:
     """(message, status) from a Codex `task_complete.error` payload.
 
     The message is double-JSON-encoded: a JSON string wrapping the real
     `{"error": {"message", "type", "code"}}` object. Unwind both layers;
     the status comes from the object's `code` (falling back to a known
-    `type` name). Falls back to the raw string when not valid JSON.
+    `type` name, then to an `unexpected status NNN` phrase in the text).
+    Non-JSON (plain) messages fall back to the raw text.
     """
     if not isinstance(err, dict):
         return "", None
@@ -126,7 +140,10 @@ def _codex_error_parts(err: object) -> tuple[str, str | None]:
     try:
         inner = json.loads(msg)
     except (ValueError, TypeError):
-        return msg, None
+        # 0.155 plain-string errors (e.g. "unexpected status 404
+        # Not Found: ...") are not JSON; the status, when present,
+        # only exists inside the message text.
+        return msg, _status_from_text(msg)
     node = inner if isinstance(inner, dict) else None
     if isinstance(node, dict):
         child = node.get("error")
@@ -136,7 +153,11 @@ def _codex_error_parts(err: object) -> tuple[str, str | None]:
     if isinstance(node, dict):
         real = node.get("message")
         if isinstance(real, str) and real:
+            if status is None:
+                status = _status_from_text(real)
             return real, status
+    if status is None:
+        status = _status_from_text(msg)
     return msg, status
 
 

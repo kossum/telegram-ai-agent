@@ -844,6 +844,48 @@ def test_repair_poisoned_rollout(tmp_path, monkeypatch) -> None:
     assert repair_poisoned_rollout("not-a-session-id", home=tmp_path) == 0
 
 
+def test_codex_error_parts_plain_0155_status() -> None:
+    """0.155 plain-string errors carry the status only in prose."""
+    from telegram_bot.core.services.cc_events import _codex_error_parts
+
+    plain_404 = {
+        "message": (
+            "unexpected status 404 Not Found: The model `x` does not "
+            "exist., url: http://vllm/v1/responses"
+        ),
+        "codex_error_info": "other",
+    }
+    msg, status = _codex_error_parts(plain_404)
+    assert status == "404"
+    assert msg.startswith("unexpected status 404")
+
+    plain_503 = {
+        "message": "unexpected status 503 Service Unavailable: x",
+        "codex_error_info": "other",
+    }
+    msg, status = _codex_error_parts(plain_503)
+    assert status == "503"
+
+    # No recognizable status -> None (no false 4xx).
+    plain_unknown = {
+        "message": "something broke", "codex_error_info": "other"
+    }
+    msg, status = _codex_error_parts(plain_unknown)
+    assert status is None
+    assert msg == "something broke"
+
+    # Double-encoded JSON still wins: explicit code beats prose.
+    nested = {
+        "message": json.dumps(
+            {"error": {"message": "boom", "type": "BadRequestError",
+                          "code": 400}}
+        ),
+    }
+    msg, status = _codex_error_parts(nested)
+    assert status == "400"
+    assert msg == "boom"
+
+
 async def test_stream_retries_after_repairing_poisoned_rollout(
     tmp_path: Path, monkeypatch
 ) -> None:

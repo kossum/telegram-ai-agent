@@ -618,6 +618,19 @@ class CodexAdapter:
         if event_type == "thread.started":
             thread_id = data.get("thread_id")
             return ExecParseResult([], thread_id if isinstance(thread_id, str) else None)
+        # Codex >=0.154 `--json` stream emits top-level turn.* / error
+        # events (not the older event_msg/response_item wrapper below).
+        # A failed turn carries its HTTP error here; a completed turn's
+        # answer is read from the -o file, so it emits no result_message
+        # of its own.
+        if event_type == "turn.failed":
+            text = _codex_error_text(data.get("error"))
+            return ExecParseResult(
+                [StreamEvent("result_message", text or "Codex turn failed")],
+                done=True,
+            )
+        if event_type in ("turn.started", "turn.completed", "error"):
+            return ExecParseResult([])
 
         payload = data.get("payload")
         if event_type == "response_item" and isinstance(payload, dict):
