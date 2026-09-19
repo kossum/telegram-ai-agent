@@ -152,6 +152,10 @@ class SessionData:
     compact_window_override: int | None = None
     last_codex_error: str = ""
     last_user_message_id: int | None = None
+    # Latest known text of that message: the original delivery text, or the
+    # newest message_edit we observed. Lets /resend replay an edit even when
+    # the Bot API's getMessage is unreachable for the chat (e.g. 404).
+    last_user_message_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -302,6 +306,7 @@ class SessionManager:
         session_id: str,
         model: str | None = None,
         last_message_id: int | None = None,
+        last_message_text: str | None = None,
     ) -> object:
         """Persist legacy Claude as a string; use typed refs when needed."""
         if provider == "claude" and model is None:
@@ -311,6 +316,7 @@ class SessionManager:
             "session_id": session_id,
             "model": model,
             "last_message_id": last_message_id,
+            "last_message_text": last_message_text,
         }
 
     def _apply_topic_config(self, session: SessionData, channel_key: ChannelKey) -> None:
@@ -365,6 +371,7 @@ class SessionManager:
             saved_provider = "claude"
             saved_model: str | None = None
             saved_last_message_id: int | None = None
+            saved_last_message_text: str | None = None
             if isinstance(saved, str):
                 saved_sid = saved
             elif isinstance(saved, dict):
@@ -380,11 +387,14 @@ class SessionManager:
                     saved_model = model
                 if isinstance(last_message_id, int):
                     saved_last_message_id = last_message_id
+                if isinstance(saved.get("last_message_text"), str):
+                    saved_last_message_text = saved["last_message_text"]
             if saved_sid:
                 session.session_id = saved_sid
                 session.engine = saved_provider
                 session.model = saved_model
                 session.last_user_message_id = saved_last_message_id
+                session.last_user_message_text = saved_last_message_text
                 logger.info(
                     "Restoring provider=%s session_id=%s for channel %s",
                     saved_provider,
@@ -1263,6 +1273,7 @@ class SessionManager:
                                 session.session_id,
                                 session.model,
                                 session.last_user_message_id,
+                                session.last_user_message_text,
                             )
                             self._save_channel_sessions()
                         if self._retry_poisoned_rollout(session, attempt, max_attempts):
@@ -1386,7 +1397,9 @@ class SessionManager:
             return True
         return False
 
-    def note_user_message(self, channel_key: ChannelKey, message_id: int) -> None:
+    def note_user_message(
+        self, channel_key: ChannelKey, message_id: int, text: str | None = None
+    ) -> None:
         """Remember the Telegram id of the channel's last user text message.
 
         Used by /resend to re-fetch the message's *current* (possibly edited)
@@ -1395,12 +1408,15 @@ class SessionManager:
         """
         session = self._get_session(channel_key)
         session.last_user_message_id = message_id
+        if text is not None:
+            session.last_user_message_text = text
         if session.session_id:
             self._channel_sessions[self._ch_key(channel_key)] = self._session_ref(
                 session.engine,
                 session.session_id,
                 session.model,
                 session.last_user_message_id,
+                session.last_user_message_text,
             )
             self._save_channel_sessions()
 
@@ -1670,8 +1686,11 @@ class SessionManager:
         """Load message→session mapping from JSON file.
 
         Backwards compatible: old dict format {"s": sid, "p": project} converted to string.
+        The channel→session table loads independently of the mapping file, so a
+        missing mapping file must not drop the resume state it carries.
         """
         if not self._mapping_path.exists():
+            self._load_channel_sessions()
             return
         try:
             data = json.loads(self._mapping_path.read_text())
@@ -1714,7 +1733,10 @@ class SessionManager:
         while len(self._msg_sessions) > max_size:
             self._msg_sessions.popitem(last=False)
 
-        # Load channel→session mapping for post-restart resume
+        self._load_channel_sessions()
+
+    def _load_channel_sessions(self) -> None:
+        """Load the channel→session table (resume state + cached message text)."""
         if self._channel_sessions_path.exists():
             try:
                 data = json.loads(self._channel_sessions_path.read_text())
@@ -1726,13 +1748,24 @@ class SessionManager:
                         if isinstance(v, str):
                             self._channel_sessions[k] = v
                         elif isinstance(v, dict) and isinstance(v.get("session_id"), str):
-                            self._channel_sessions[k] = {
+                            ref: dict[str, object] = {
                                 "provider": str(v.get("provider", "claude")),
                                 "session_id": str(v["session_id"]),
                                 "model": (
                                     v.get("model") if isinstance(v.get("model"), str) else None
                                 ),
+                                "last_message_id": (
+                                    v.get("last_message_id")
+                                    if isinstance(v.get("last_message_id"), int)
+                                    else None
+                                ),
+                                "last_message_text": (
+                                    v.get("last_message_text")
+                                    if isinstance(v.get("last_message_text"), str)
+                                    else None
+                                ),
                             }
+                            self._channel_sessions[k] = ref
                     logger.info("Loaded %d channel→session mappings", len(self._channel_sessions))
             except (json.JSONDecodeError, OSError):
                 logger.warning(
@@ -1790,6 +1823,7 @@ class SessionManager:
                     session.session_id,
                     session.model,
                     session.last_user_message_id,
+                    session.last_user_message_text,
                 )
         self._save_channel_sessions()
 

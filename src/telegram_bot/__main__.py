@@ -150,7 +150,9 @@ async def process_queue_item(
     # Remember the last genuine user message so /resend can re-fetch its
     # current (edited) text. A resend replay itself must not overwrite it.
     if not resend and source_messages:
-        session_manager.note_user_message(channel_key, source_messages[-1].message_id)
+        last = source_messages[-1]
+        fresh = (last.text or last.caption or "").strip() or None
+        session_manager.note_user_message(channel_key, last.message_id, fresh)
 
     if target_session_id is not None:
         await session_manager.override_session(channel_key, target_session_id)

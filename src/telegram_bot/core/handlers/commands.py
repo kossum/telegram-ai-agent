@@ -393,11 +393,18 @@ async def handle_resend(
         replay_point = locate_replay_point(rollout_path) if rollout_path else None
         if replay_point is not None:
             truncate_to(rollout_path, replay_point.cut_index)
-        prompt_text = (
-            fresh_text
-            if fresh_text is not None
-            else (replay_point.text if replay_point is not None else None)
-        )
+        # Freshness order: live Bot-API text, then the newest text we saw
+        # for that message (original delivery or a message_edit we cached
+        # — covers chats where getMessage 404s), then the stored rollout
+        # text.
+        if fresh_text is not None:
+            prompt_text = fresh_text
+        elif session.last_user_message_text is not None:
+            prompt_text = session.last_user_message_text
+        elif replay_point is not None:
+            prompt_text = replay_point.text
+        else:
+            prompt_text = None
 
     if prompt_text is None:
         await message.answer(t("ui.resend_not_found"))

@@ -1179,6 +1179,47 @@ def _text_of(payload: dict) -> str:
     return ""
 
 
+def test_resend_edit_text_caching(tmp_path: Path, monkeypatch) -> None:
+    """/resend replays an edit even when the Bot API cannot re-fetch it.
+
+    note_user_message caches the message's text; a later edit overrides it;
+    the cache survives a manager rebuild (bot restart).
+    """
+    from telegram_bot.core.config import Settings
+    from telegram_bot.core.services.claude import SessionManager
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    settings = Settings(
+        _env_file=None,
+        telegram_bot_token="test-token",
+        project_root=str(tmp_path),
+    )
+    key = (1, None)
+    mgr = SessionManager(settings)
+    s0 = mgr._get_session(key)
+    s0.session_id = "01a0a4c2-6fe5-7fd2-ba62-23f21c5b8bf3"
+    s0.engine = "codex"
+    mgr.note_user_message(key, 100, "original text")
+    assert mgr._get_session(key).last_user_message_text == "original text"
+
+    # A message_edit for the same id overrides the cached text.
+    mgr.note_user_message(key, 100, "edited text")
+    assert mgr._get_session(key).last_user_message_text == "edited text"
+
+    # A newer genuine message resets both id and text.
+    mgr.note_user_message(key, 200, "new message")
+    s = mgr._get_session(key)
+    assert s.last_user_message_id == 200
+    assert s.last_user_message_text == "new message"
+
+    # The cache is persisted and survives a bot restart.
+    mgr2 = SessionManager(settings)
+    mgr2.load_mapping()
+    s2 = mgr2._get_session(key)
+    assert s2.last_user_message_id == 200
+    assert s2.last_user_message_text == "new message"
+
+
 def test_resend_find_rollout_path(tmp_path: Path, monkeypatch) -> None:
     """find_rollout_path matches by session_meta id and fails closed otherwise."""
     from telegram_bot.core.services import codex_rollout as roll

@@ -8,6 +8,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, InaccessibleMessage, Message
 
 from telegram_bot.core.messages import t
+from telegram_bot.core.services.claude import SessionManager
 from telegram_bot.core.services.message_queue import MessageQueue
 from telegram_bot.core.services.tmux_manager import TmuxManager
 from telegram_bot.core.types import ChannelKey, channel_key
@@ -78,3 +79,26 @@ async def handle_cancel_text(
     else:
         logger.debug("Cancel text pressed but no active process for %s", key)
         await message.answer(t("ui.nothing_to_cancel"))
+
+
+@router.edited_message()
+async def handle_edited_message(message: Message, session_manager: SessionManager) -> None:
+    """Track edits to the channel's last user message.
+
+    ``/resend`` re-fetches the message's current text via the Bot API;
+    when that is unreachable for the chat (e.g. ``getMessage`` 404s in
+    some private chats), the newest edit seen here is the fallback so a
+    cancel→edit→resend still replays the edited text.
+    """
+    if message.message_id is None:
+        return
+    key = channel_key(message)
+    if key not in session_manager._sessions:
+        return
+    session = session_manager._sessions[key]
+    if session.last_user_message_id != message.message_id:
+        return
+    text = (message.text or message.caption or "").strip()
+    if text:
+        session_manager.note_user_message(key, message.message_id, text)
+        logger.debug("Cached edited text for channel %s", key)
