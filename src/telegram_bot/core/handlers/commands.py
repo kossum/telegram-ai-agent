@@ -465,7 +465,9 @@ async def handle_compact(
         window = resolve_compact_turn_window(settings.codex_compact_turn_window)
         usage = get_codex_context_usage(session.session_id)
         if usage is None or usage.context_tokens < window:
-            await message.answer(t("ui.compact_under_threshold"))
+            await message.answer(
+                t("ui.compact_under_threshold", threshold_k=window // 1024)
+            )
             return
         session.compact_window_override = window
         # `codex exec` has no slash-command layer, so the literal

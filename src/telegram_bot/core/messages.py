@@ -70,7 +70,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         ),
         "ui.usage_not_found": ("Couldn't find the session transcript yet. Try again in a moment."),
         "ui.compact_started": "Compacting the session context…",
-        "ui.compact_under_threshold": ("Already under the 48K threshold — nothing to compact."),
+        "ui.compact_under_threshold": (
+            "Already under the {threshold_k}K threshold — nothing to compact."
+        ),
         "ui.compact_codex_prompt": (
             "Context was just compacted. Reply with one short line "
             "confirming the compaction; do not run any tools."
@@ -368,7 +370,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.usage_not_found": ("Транскрипт сессии пока не найден. Повтори через минуту."),
         "ui.compact_started": "Компактизация контекста сессии…",
         "ui.compacting": "⏳ Компактизация контекста…",
-        "ui.compact_under_threshold": "Контекст уже ниже порога 48K — компактовать нечего.",
+        "ui.compact_under_threshold": (
+            "Контекст уже ниже порога {threshold_k}K — компактовать нечего."
+        ),
         "ui.compact_codex_prompt": (
             "Контекст только что сжат. Ответь одной короткой строкой, "
             "подтверждая сжатие; не запускай инструменты."
