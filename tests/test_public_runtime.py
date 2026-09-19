@@ -843,6 +843,111 @@ def test_repair_poisoned_rollout(tmp_path, monkeypatch) -> None:
     assert repair_poisoned_rollout("not-a-session-id", home=tmp_path) == 0
 
 
+async def test_stream_retries_after_repairing_poisoned_rollout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """CCProcessError carrying a 4xx codex error repairs the rollout before retry."""
+    from telegram_bot.core.services.claude import (
+        NOOP_STREAM_EVENT,
+        CCProcessError,
+        SessionManager,
+    )
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    settings = Settings(
+        _env_file=None,
+        telegram_bot_token="test-token",
+        project_root=str(tmp_path),
+    )
+    mgr = SessionManager(settings)
+
+    sid = "01a0a4c2-6fe5-7fd2-ba62-23f21c5b8bf3"
+    root = tmp_path / "sessions" / "2026" / "09" / "15"
+    root.mkdir(parents=True)
+    rollout = root / f"rollout-2026-09-15T11-10-01-{sid}.jsonl"
+
+    def msg(turn_id: str, text: str) -> dict:
+        return {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": text}],
+                "internal_chat_message_metadata_passthrough": {"turn_id": turn_id},
+            },
+        }
+
+    def call(turn_id: str, call_id: str, args: str) -> dict:
+        return {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": call_id,
+                "arguments": args,
+                "internal_chat_message_metadata_passthrough": {"turn_id": turn_id},
+            },
+        }
+
+    def done(turn_id: str, error: dict | None) -> dict:
+        payload: dict = {"type": "task_complete", "turn_id": turn_id}
+        if error is not None:
+            payload["error"] = error
+        return {"type": "event_msg", "payload": payload}
+
+    err_400 = {
+        "message": json.dumps(
+            {
+                "error": {
+                    "message": "Unterminated string starting at: line 1 column 9 (char 8)",
+                    "type": "BadRequestError",
+                    "code": 400,
+                }
+            }
+        ),
+        "codex_error_info": "other",
+    }
+    records = (
+        msg("t-good", "hi"),
+        call("t-good", "call_good", '{"cmd": "ls"}'),
+        done("t-good", None),
+        msg("t-bad", "stuck?"),
+        call("t-bad", "call_bad", '{"cmd": "stat -c \'%y\' /app/x.py'),
+        done("t-bad", err_400),
+    )
+    rollout.write_text("".join(json.dumps(r) + "\n" for r in records))
+
+    channel_key = (5371020261, None)
+    session = mgr._get_session(channel_key)
+    session.engine = "codex"
+    session.session_id = sid
+
+    calls = 0
+
+    async def fake_run_cc_stream(prompt: str, sess, on_event) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            sess.last_codex_error = err_400["message"]
+            raise CCProcessError(1)
+        return "fixed reply"
+
+    monkeypatch.setattr(mgr, "_run_cc_stream", fake_run_cc_stream)
+
+    result = await mgr.send_stream(channel_key, "stuck?", NOOP_STREAM_EVENT)
+
+    assert result == "fixed reply"
+    assert calls == 2
+    kept = [json.loads(line) for line in rollout.read_text().splitlines()]
+    payloads = [k["payload"] for k in kept]
+    assert not any(p.get("call_id") == "call_bad" for p in payloads)
+    assert any(p.get("call_id") == "call_good" for p in payloads)
+    assert any(
+        p.get("type") == "message" and "stuck?" in json.dumps(p.get("content"))
+        for p in payloads
+    )
+
+
 def test_codex_error_text_status_prefix() -> None:
     from telegram_bot.core.services.cc_events import _codex_error_text
 

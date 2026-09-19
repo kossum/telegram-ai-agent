@@ -912,6 +912,11 @@ class SessionManager:
                 await cleanup_runtime_mcp_processes()
                 cleanup_runtime_mcp_config()
                 return result_text
+            elif process.returncode and process.returncode != 0 and captured_codex_error:
+                # Non-zero exit carrying the turn's error (e.g. exit 1 after
+                # a 4xx): record it so the retry path can repair the
+                # poisoned rollout before re-running the prompt.
+                session.last_codex_error = captured_codex_error
             elif process.returncode == 0:
                 logger.warning("Codex output-last-message file empty or missing")
                 cleanup_output_last_message()
@@ -1275,6 +1280,9 @@ class SessionManager:
                             # Final attempt — report the failure below.
                             break
                         logger.info("Retrying CC stream after error: %s", exc)
+                        # A 4xx turn can poison the rollout; repair it so the
+                        # retried prompt does not hit the same 400 wall again.
+                        self._retry_poisoned_rollout(session, attempt, max_attempts)
                         # Kill old process before retry to prevent zombie processes
                         if session.process is not None:
                             await self._kill_process(session.process)
