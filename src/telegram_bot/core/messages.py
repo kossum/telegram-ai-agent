@@ -79,9 +79,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         ),
         "ui.resend_no_session": "No session to resend — send a message first.",
         "ui.resend_not_codex": "Resend is only available for codex sessions.",
-        "ui.resend_not_found": (
-            "Couldn't find your last message to resend — try again."
-        ),
+        "ui.resend_not_found": ("Couldn't find your last message to resend — try again."),
         "ui.resend_started": "Resending your last message…",
         "ui.engine_starting": (
             "🔄 {engine} is starting up — please wait a few seconds before sending."
@@ -370,9 +368,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.usage_compactions": "Компакций: {count}",
         "ui.usage_session": "Сессия: <code>{engine} {session_id}</code>",
         "ui.usage_no_session": ("Сессии пока нет — сначала отправь мне сообщение."),
-        "ui.usage_not_codex": (
-            "Учёт использования доступен для Codex и Claude Code."
-        ),
+        "ui.usage_not_codex": ("Учёт использования доступен для Codex и Claude Code."),
         "ui.usage_not_found": ("Транскрипт сессии пока не найден. Повтори через минуту."),
         "ui.compact_started": "Компактизация контекста сессии…",
         "ui.compacting": "⏳ Компактизация контекста…",
@@ -383,13 +379,9 @@ MESSAGES: dict[str, dict[str, str]] = {
             "Контекст только что сжат. Ответь одной короткой строкой, "
             "подтверждая сжатие; не запускай инструменты."
         ),
-        "ui.resend_no_session": (
-            "Нет сессии для повторной отправки — сначала отправь сообщение."
-        ),
+        "ui.resend_no_session": ("Нет сессии для повторной отправки — сначала отправь сообщение."),
         "ui.resend_not_codex": "Повторная отправка доступна только для сессий codex.",
-        "ui.resend_not_found": (
-            "Не нашли ваше последнее сообщение — повторите."
-        ),
+        "ui.resend_not_found": ("Не нашли ваше последнее сообщение — повторите."),
         "ui.resend_started": "Повторная отправка вашего последнего сообщения…",
         "ui.engine_starting": (
             "🔄 {engine} запускается — подожди несколько секунд перед отправкой."

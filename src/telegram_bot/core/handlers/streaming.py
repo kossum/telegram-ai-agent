@@ -78,9 +78,7 @@ DeliveryAction = Literal[
 _TYPING_KEEPALIVE_SEC = 4.0
 
 
-async def _send_typing_action(
-    bot: Any, chat_id: int, thread_id: int | None
-) -> None:
+async def _send_typing_action(bot: Any, chat_id: int, thread_id: int | None) -> None:
     """Send one "typing" chat action; never raises (a failed ping is cosmetic)."""
     try:
         await bot.send_chat_action(
@@ -106,9 +104,7 @@ async def _typing_keepalive(
     while True:
         await _send_typing_action(bot, chat_id, thread_id)
         try:
-            await asyncio.wait_for(
-                stop_event.wait(), timeout=_TYPING_KEEPALIVE_SEC
-            )
+            await asyncio.wait_for(stop_event.wait(), timeout=_TYPING_KEEPALIVE_SEC)
         except TimeoutError:
             continue
         break
@@ -897,9 +893,7 @@ async def send_streaming_response(
     typing_stop = asyncio.Event()
     typing_task = (
         asyncio.create_task(
-            _typing_keepalive(
-                message.bot, message.chat.id, channel_key[1], typing_stop
-            )
+            _typing_keepalive(message.bot, message.chat.id, channel_key[1], typing_stop)
         )
         if message.bot is not None
         else None

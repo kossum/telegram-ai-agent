@@ -867,9 +867,7 @@ def test_codex_error_parts_plain_0155_status() -> None:
     assert status == "503"
 
     # No recognizable status -> None (no false 4xx).
-    plain_unknown = {
-        "message": "something broke", "codex_error_info": "other"
-    }
+    plain_unknown = {"message": "something broke", "codex_error_info": "other"}
     msg, status = _codex_error_parts(plain_unknown)
     assert status is None
     assert msg == "something broke"
@@ -877,8 +875,7 @@ def test_codex_error_parts_plain_0155_status() -> None:
     # Double-encoded JSON still wins: explicit code beats prose.
     nested = {
         "message": json.dumps(
-            {"error": {"message": "boom", "type": "BadRequestError",
-                          "code": 400}}
+            {"error": {"message": "boom", "type": "BadRequestError", "code": 400}}
         ),
     }
     msg, status = _codex_error_parts(nested)
@@ -886,9 +883,7 @@ def test_codex_error_parts_plain_0155_status() -> None:
     assert msg == "boom"
 
 
-async def test_stream_retries_after_repairing_poisoned_rollout(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_stream_retries_after_repairing_poisoned_rollout(tmp_path: Path, monkeypatch) -> None:
     """CCProcessError carrying a 4xx codex error repairs the rollout before retry."""
     from telegram_bot.core.services.claude import (
         NOOP_STREAM_EVENT,
@@ -986,8 +981,7 @@ async def test_stream_retries_after_repairing_poisoned_rollout(
     assert not any(p.get("call_id") == "call_bad" for p in payloads)
     assert any(p.get("call_id") == "call_good" for p in payloads)
     assert any(
-        p.get("type") == "message" and "stuck?" in json.dumps(p.get("content"))
-        for p in payloads
+        p.get("type") == "message" and "stuck?" in json.dumps(p.get("content")) for p in payloads
     )
 
 
@@ -1081,9 +1075,7 @@ async def test_typing_keepalive_repings_until_stopped(monkeypatch) -> None:
     bot.send_chat_action = AsyncMock()
     stop = asyncio.Event()
 
-    task = asyncio.create_task(
-        streaming._typing_keepalive(bot, 42, None, stop)
-    )
+    task = asyncio.create_task(streaming._typing_keepalive(bot, 42, None, stop))
     await asyncio.sleep(0.05)  # let it re-ping more than once
     stop.set()
     await task
@@ -1108,6 +1100,7 @@ def _user_line(text: str) -> dict:
             "content": [{"type": "input_text", "text": text}],
         },
     }
+
 
 def _assistant_line(text: str) -> dict:
     return {
@@ -1161,8 +1154,11 @@ def test_resend_locate_and_truncate(tmp_path: Path) -> None:
         for p in parsed
     )
     # the first message survived
-    assert any(_text_of(p["payload"]) == "first real message" for p in parsed
-               if isinstance(p.get("payload"), dict) and p["payload"].get("type") == "message")
+    assert any(
+        _text_of(p["payload"]) == "first real message"
+        for p in parsed
+        if isinstance(p.get("payload"), dict) and p["payload"].get("type") == "message"
+    )
     # file is still valid JSON line-by-line
     assert all(json.loads(line) for line in rollout.read_text().splitlines())
 
@@ -1173,7 +1169,8 @@ def _text_of(payload: dict) -> str:
         return content
     if isinstance(content, list):
         return "".join(
-            item.get("text", "") for item in content
+            item.get("text", "")
+            for item in content
             if isinstance(item, dict) and item.get("type") == "input_text"
         )
     return ""

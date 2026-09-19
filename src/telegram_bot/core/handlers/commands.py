@@ -378,9 +378,7 @@ async def handle_resend(
 
     last_message_id = session.last_user_message_id
     # Prefer the message's current (possibly edited) Telegram text.
-    orig_message, fresh_text = await fetch_message_text(
-        message.bot, key[0], last_message_id
-    )
+    orig_message, fresh_text = await fetch_message_text(message.bot, key[0], last_message_id)
 
     # 1. Cancel the in-flight turn (kills the codex process, clears the queue).
     await message_queue.cancel(key)
@@ -485,8 +483,7 @@ async def handle_usage(
     usage, max_tokens = _resolve_usage_for_session(session, settings)
     if usage is None:
         await message.answer(
-            t("ui.usage_no_session") if not session.session_id
-            else t("ui.usage_not_found")
+            t("ui.usage_no_session") if not session.session_id else t("ui.usage_not_found")
         )
         return
     text = format_usage(usage, max_tokens)
@@ -546,9 +543,7 @@ async def handle_compact(
         window = resolve_compact_turn_window(settings.codex_compact_turn_window)
         usage = get_codex_context_usage(session.session_id)
         if usage is None or usage.context_tokens < window:
-            await message.answer(
-                t("ui.compact_under_threshold", threshold_k=window // 1024)
-            )
+            await message.answer(t("ui.compact_under_threshold", threshold_k=window // 1024))
             return
         session.compact_window_override = window
         # `codex exec` has no slash-command layer, so the literal
