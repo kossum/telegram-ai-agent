@@ -659,7 +659,12 @@ async def send_streaming_response(
             return
 
     cmd = prompt.split()[0] if prompt.startswith("/") else None
-    thinking_text = t("ui.running_command", command=cmd) if cmd else t("ui.thinking")
+    if cmd:
+        thinking_text = t("ui.running_command", command=cmd)
+    elif prompt.startswith(t("ui.compact_codex_prompt")):
+        thinking_text = t("ui.compacting")
+    else:
+        thinking_text = t("ui.thinking")
     used_tmux = tmux_manager is not None and tmux_manager.is_active(channel_key)
     if tmux_required and not used_tmux:
         logger.warning(
