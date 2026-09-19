@@ -71,6 +71,48 @@ DeliveryAction = Literal[
     "turn_end",
 ]
 
+# Re-ping the Telegram "typing" indicator while a turn is in flight. Telegram
+# keeps the indicator alive for only ~5s, so this interval keeps it continuous.
+# The loop re-sends regardless of streamed output — that is the point: it is
+# the liveness signal for when the model is silent between messages.
+_TYPING_KEEPALIVE_SEC = 4.0
+
+
+async def _send_typing_action(
+    bot: Any, chat_id: int, thread_id: int | None
+) -> None:
+    """Send one "typing" chat action; never raises (a failed ping is cosmetic)."""
+    try:
+        await bot.send_chat_action(
+            chat_id=chat_id,
+            action="typing",
+            message_thread_id=thread_id,
+        )
+    except Exception:
+        logger.debug("typing keepalive failed (cosmetic)", exc_info=True)
+
+
+async def _typing_keepalive(
+    bot: Any,
+    chat_id: int,
+    thread_id: int | None,
+    stop_event: asyncio.Event,
+) -> None:
+    """Re-send "typing" every _TYPING_KEEPALIVE_SEC until stop_event is set.
+
+    Runs as a background task for the lifetime of one turn so the user can
+    tell the bot is still working even when the model emits no output.
+    """
+    while True:
+        await _send_typing_action(bot, chat_id, thread_id)
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(), timeout=_TYPING_KEEPALIVE_SEC
+            )
+        except TimeoutError:
+            continue
+        break
+
 
 def _resolve_stream_mode(
     topic_config: TopicConfig | None,
@@ -850,6 +892,19 @@ async def send_streaming_response(
                 channel_key,
             )
 
+    # Keep the "typing" indicator alive for the whole turn so the user can
+    # tell the bot is still working (and spot when it silently stops).
+    typing_stop = asyncio.Event()
+    typing_task = (
+        asyncio.create_task(
+            _typing_keepalive(
+                message.bot, message.chat.id, channel_key[1], typing_stop
+            )
+        )
+        if message.bot is not None
+        else None
+    )
+
     try:
         if used_tmux:
             assert tmux_manager is not None
@@ -869,6 +924,13 @@ async def send_streaming_response(
         # Status messages ARE the history — no cleanup needed
         raise
     finally:
+        # Stop the typing keepalive; cancel + await so the task can't outlive
+        # the turn or leak a "task was destroyed" warning.
+        if typing_task is not None:
+            typing_stop.set()
+            typing_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await typing_task
         # Close the non-tmux live buffer if we owned one. In tmux mode the
         # buffer is owned by tmux_manager and stays alive across the tail —
         # it's closed when the next user message arrives or on /clear.

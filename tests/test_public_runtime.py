@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from telegram_bot.core.config import Settings
 from telegram_bot.core.env_file import read_exact_env_file
@@ -1026,3 +1027,27 @@ def test_codex_mcp_tool_call_emits_mcp_notice() -> None:
         }
     )
     assert [e for e in CODEX_ADAPTER.parse_exec_event(collab).events if e.type == "mcp"] == []
+
+
+async def test_typing_keepalive_repings_until_stopped(monkeypatch) -> None:
+    """The keepalive re-sends 'typing' repeatedly and stops on the event."""
+    from telegram_bot.core.handlers import streaming
+
+    monkeypatch.setattr(streaming, "_TYPING_KEEPALIVE_SEC", 0.01)
+
+    bot = MagicMock()
+    bot.send_chat_action = AsyncMock()
+    stop = asyncio.Event()
+
+    task = asyncio.create_task(
+        streaming._typing_keepalive(bot, 42, None, stop)
+    )
+    await asyncio.sleep(0.05)  # let it re-ping more than once
+    stop.set()
+    await task
+
+    assert bot.send_chat_action.call_count >= 2
+    _, kwargs = bot.send_chat_action.call_args
+    assert kwargs["action"] == "typing"
+    assert kwargs["chat_id"] == 42
+    assert kwargs["message_thread_id"] is None
