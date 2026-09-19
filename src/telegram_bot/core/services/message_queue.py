@@ -28,6 +28,7 @@ class QueueItem:
     source_messages: list[Message]
     target_session_id: str | None = None
     start_new_session: bool = False
+    resend: bool = False
 
 
 @dataclass
@@ -97,6 +98,15 @@ class MessageQueue:
             return False
         return queue.lock.locked() or bool(queue.items)
 
+    def lock_for(self, channel_key: ChannelKey) -> asyncio.Lock:
+        """The channel's processing lock — use as an async context manager.
+
+        Holding it guarantees no turn for this channel is in flight, so
+        callers can safely mutate that session's on-disk state (e.g. the
+        codex rollout) without a concurrent writer.
+        """
+        return self._get_queue(channel_key).lock
+
     def enqueue(
         self,
         channel_key: ChannelKey,
@@ -106,6 +116,7 @@ class MessageQueue:
         target_session_id: str | None = None,
         start_new_session: bool = False,
         suppress_notification: bool = False,
+        resend: bool = False,
     ) -> None:
         """Add a message to the channel's queue.
 
@@ -122,6 +133,7 @@ class MessageQueue:
                 source_messages=[source_message],
                 target_session_id=target_session_id,
                 start_new_session=start_new_session,
+                resend=resend,
             )
             queue.items.append(item)
             logger.info(
@@ -166,6 +178,7 @@ class MessageQueue:
                 source_messages=[source_message],
                 target_session_id=target_session_id,
                 start_new_session=start_new_session,
+                resend=resend,
             )
             queue.items.append(item)
             position = len(queue.items)
@@ -266,6 +279,7 @@ class MessageQueue:
                             item.source_messages,
                             item.target_session_id,
                             start_new_session=True,
+                            resend=item.resend,
                         )
                     else:
                         await self._process_callback(
@@ -273,6 +287,7 @@ class MessageQueue:
                             combined_prompt,
                             item.source_messages,
                             item.target_session_id,
+                            resend=item.resend,
                         )
                     queue.error_count = 0
                 except Exception:

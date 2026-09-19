@@ -1051,3 +1051,108 @@ async def test_typing_keepalive_repings_until_stopped(monkeypatch) -> None:
     assert kwargs["action"] == "typing"
     assert kwargs["chat_id"] == 42
     assert kwargs["message_thread_id"] is None
+
+
+def _write_rollout(path: Path, lines: list[dict]) -> None:
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+
+
+def _user_line(text: str) -> dict:
+    return {
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": text}],
+        },
+    }
+
+def _assistant_line(text: str) -> dict:
+    return {
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": text}],
+        },
+    }
+
+
+def _turn_context_line() -> dict:
+    return {
+        "type": "turn_context",
+        "payload": {"turn_id": "t1", "cwd": "/w"},
+    }
+
+
+def test_resend_locate_and_truncate(tmp_path: Path) -> None:
+    """A resend cuts at the last user message (plus its turn_context) and replays text."""
+    from telegram_bot.core.services import codex_rollout as roll
+
+    rollout = tmp_path / "s.jsonl"
+    lines = [
+        {"type": "session_meta", "payload": {"id": "sess-1", "originator": "codex_exec"}},
+        _turn_context_line(),
+        _user_line("first real message"),
+        _assistant_line("reply one"),
+        _turn_context_line(),
+        _user_line("the last message"),
+        _assistant_line("reply two"),
+    ]
+    _write_rollout(rollout, lines)
+
+    point = roll.locate_replay_point(rollout)
+    assert point is not None
+    assert point.text == "the last message"
+    # cut removes the turn_context that opens the last user message + everything after
+    assert point.cut_index == lines.index(_user_line("the last message")) - 1
+
+    assert roll.truncate_to(rollout, point.cut_index) is True
+    kept = rollout.read_text().splitlines()
+    parsed = [json.loads(line) for line in kept]
+    # the last message and its turn_context (and the reply) are gone
+    assert not any(
+        isinstance(p.get("payload"), dict)
+        and p["payload"].get("type") == "message"
+        and p["payload"].get("role") == "user"
+        and _text_of(p["payload"]) == "the last message"
+        for p in parsed
+    )
+    # the first message survived
+    assert any(_text_of(p["payload"]) == "first real message" for p in parsed
+               if isinstance(p.get("payload"), dict) and p["payload"].get("type") == "message")
+    # file is still valid JSON line-by-line
+    assert all(json.loads(line) for line in rollout.read_text().splitlines())
+
+
+def _text_of(payload: dict) -> str:
+    content = payload.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            item.get("text", "") for item in content
+            if isinstance(item, dict) and item.get("type") == "input_text"
+        )
+    return ""
+
+
+def test_resend_find_rollout_path(tmp_path: Path, monkeypatch) -> None:
+    """find_rollout_path matches by session_meta id and fails closed otherwise."""
+    from telegram_bot.core.services import codex_rollout as roll
+
+    monkeypatch.setattr(roll, "_codex_sessions_root", lambda: tmp_path)
+    target = tmp_path / "rollout-2026-01-01T00-00-00-sess-9.jsonl"
+    _write_rollout(
+        target,
+        [{"type": "session_meta", "payload": {"id": "sess-9", "originator": "codex_exec"}}],
+    )
+    assert roll.find_rollout_path("sess-9") == target.resolve()
+    assert roll.find_rollout_path("missing-id") is None
+    # two files with the same id -> fail closed
+    dup = tmp_path / "rollout-2026-01-02T00-00-00-sess-9.jsonl"
+    _write_rollout(
+        dup,
+        [{"type": "session_meta", "payload": {"id": "sess-9", "originator": "codex_exec"}}],
+    )
+    assert roll.find_rollout_path("sess-9") is None

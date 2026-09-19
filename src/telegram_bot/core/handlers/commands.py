@@ -36,11 +36,17 @@ from telegram_bot.core.keyboards import (
 )
 from telegram_bot.core.messages import reset_lang_cache, t
 from telegram_bot.core.services.claude import SessionData, SessionManager
+from telegram_bot.core.services.codex_rollout import (
+    fetch_message_text,
+    find_rollout_path,
+    locate_replay_point,
+    truncate_to,
+)
 from telegram_bot.core.services.codex_update import CodexUpdateResult, CodexUpdateService
 from telegram_bot.core.services.context_usage import (
     ContextUsage,
-    get_claude_context_usage,
     format_usage,
+    get_claude_context_usage,
     get_codex_context_usage,
     resolve_claude_max_context_tokens,
     resolve_compact_turn_window,
@@ -346,6 +352,74 @@ async def handle_cancel_command(
         await message.answer(t("ui.cancelled"))
     else:
         await message.answer(t("ui.nothing_to_cancel"))
+
+
+@router.message(Command("resend"))
+async def handle_resend(
+    message: Message,
+    session_manager: SessionManager,
+    message_queue: MessageQueue,
+    tmux_manager: TmuxManager,
+) -> None:
+    """Replay the last user message from scratch.
+
+    Cancels the in-flight turn, cuts the codex rollout at the last user message
+    (dropping it and everything after), then re-sends that message — preferring
+    the message's current Telegram text so an edited message replays the edit.
+    """
+    key = channel_key(message)
+    session = session_manager._get_session(key)
+    if not session.session_id:
+        await message.answer(t("ui.resend_no_session"))
+        return
+    if session.engine != "codex" or tmux_manager.is_active(key):
+        await message.answer(t("ui.resend_not_codex"))
+        return
+
+    last_message_id = session.last_user_message_id
+    # Prefer the message's current (possibly edited) Telegram text.
+    orig_message, fresh_text = await fetch_message_text(
+        message.bot, key[0], last_message_id
+    )
+
+    # 1. Cancel the in-flight turn (kills the codex process, clears the queue).
+    await message_queue.cancel(key)
+
+    # 2. Under the channel lock: cut the rollout at the last user message and
+    #    capture its stored text as the replay fallback.
+    prompt_text: str | None = None
+    async with message_queue.lock_for(key):
+        rollout_path = find_rollout_path(session.session_id)
+        replay_point = locate_replay_point(rollout_path) if rollout_path else None
+        if replay_point is not None:
+            truncate_to(rollout_path, replay_point.cut_index)
+        prompt_text = (
+            fresh_text
+            if fresh_text is not None
+            else (replay_point.text if replay_point is not None else None)
+        )
+
+    if prompt_text is None:
+        await message.answer(t("ui.resend_not_found"))
+        return
+
+    # 3. Replay. The source is the original message when still fetchable (so
+    #    reply-to-resume threads to it); otherwise the /resend command itself.
+    source = orig_message if orig_message is not None else message
+    message_queue.enqueue(
+        key,
+        prompt_text,
+        source.message_id,
+        source,
+        target_session_id=session.session_id,
+        # start_new_session=True here only stops the enqueue from batch-merging
+        # this replay into a concurrent same-session item; the target_session_id
+        # above is what keeps it a resume (not a fresh session).
+        start_new_session=True,
+        resend=True,
+        suppress_notification=True,
+    )
+    await message.answer(t("ui.resend_started"))
 
 
 @router.message(Command("kill"))

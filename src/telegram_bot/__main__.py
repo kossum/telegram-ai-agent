@@ -138,6 +138,7 @@ async def process_queue_item(
     bot: Bot,
     session_manager: SessionManager,
     tmux_manager: TmuxManager,
+    resend: bool = False,
 ) -> None:
     """Send a queued prompt to CC; on session change, notify the user."""
     old_session_id = session_manager.get_current_session_id(channel_key)
@@ -145,6 +146,11 @@ async def process_queue_item(
     # After kill/reset, ignore reply-to-resume on the next message.
     if session_manager.consume_fresh_start(channel_key):
         target_session_id = None
+
+    # Remember the last genuine user message so /resend can re-fetch its
+    # current (edited) text. A resend replay itself must not overwrite it.
+    if not resend and source_messages:
+        session_manager.note_user_message(channel_key, source_messages[-1].message_id)
 
     if target_session_id is not None:
         await session_manager.override_session(channel_key, target_session_id)
@@ -220,6 +226,9 @@ async def _start() -> None:
         prompt: str,
         source_messages: list[Message],
         target_session_id: str | None,
+        *,
+        start_new_session: bool = False,
+        resend: bool = False,
     ) -> None:
         await process_queue_item(
             channel_key,
@@ -229,6 +238,7 @@ async def _start() -> None:
             bot=bot,
             session_manager=session_manager,
             tmux_manager=tmux_manager,
+            resend=resend,
         )
 
     message_queue = MessageQueue(bot, session_manager, _process_queue_item)

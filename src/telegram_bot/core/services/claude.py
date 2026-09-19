@@ -151,6 +151,7 @@ class SessionData:
     model: str | None = None
     compact_window_override: int | None = None
     last_codex_error: str = ""
+    last_user_message_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -296,7 +297,12 @@ class SessionManager:
         return f"{channel_key[0]}:{channel_key[1]}"
 
     @staticmethod
-    def _session_ref(provider: str, session_id: str, model: str | None = None) -> object:
+    def _session_ref(
+        provider: str,
+        session_id: str,
+        model: str | None = None,
+        last_message_id: int | None = None,
+    ) -> object:
         """Persist legacy Claude as a string; use typed refs when needed."""
         if provider == "claude" and model is None:
             return session_id
@@ -304,6 +310,7 @@ class SessionManager:
             "provider": provider,
             "session_id": session_id,
             "model": model,
+            "last_message_id": last_message_id,
         }
 
     def _apply_topic_config(self, session: SessionData, channel_key: ChannelKey) -> None:
@@ -357,22 +364,27 @@ class SessionManager:
             saved_sid: str | None = None
             saved_provider = "claude"
             saved_model: str | None = None
+            saved_last_message_id: int | None = None
             if isinstance(saved, str):
                 saved_sid = saved
             elif isinstance(saved, dict):
                 sid = saved.get("session_id")
                 provider = saved.get("provider")
                 model = saved.get("model")
+                last_message_id = saved.get("last_message_id")
                 if isinstance(sid, str):
                     saved_sid = sid
                 if isinstance(provider, str):
                     saved_provider = provider
                 if isinstance(model, str):
                     saved_model = model
+                if isinstance(last_message_id, int):
+                    saved_last_message_id = last_message_id
             if saved_sid:
                 session.session_id = saved_sid
                 session.engine = saved_provider
                 session.model = saved_model
+                session.last_user_message_id = saved_last_message_id
                 logger.info(
                     "Restoring provider=%s session_id=%s for channel %s",
                     saved_provider,
@@ -1250,6 +1262,7 @@ class SessionManager:
                                 session.engine,
                                 session.session_id,
                                 session.model,
+                                session.last_user_message_id,
                             )
                             self._save_channel_sessions()
                         if self._retry_poisoned_rollout(session, attempt, max_attempts):
@@ -1372,6 +1385,24 @@ class SessionManager:
             self._fresh_channels.discard(ch_key)
             return True
         return False
+
+    def note_user_message(self, channel_key: ChannelKey, message_id: int) -> None:
+        """Remember the Telegram id of the channel's last user text message.
+
+        Used by /resend to re-fetch the message's *current* (possibly edited)
+        text via the Bot API. Persisted with the session so the id survives a
+        bot restart.
+        """
+        session = self._get_session(channel_key)
+        session.last_user_message_id = message_id
+        if session.session_id:
+            self._channel_sessions[self._ch_key(channel_key)] = self._session_ref(
+                session.engine,
+                session.session_id,
+                session.model,
+                session.last_user_message_id,
+            )
+            self._save_channel_sessions()
 
     def get_mode(self, channel_key: ChannelKey) -> Mode:
         """Get the current mode for a channel."""
@@ -1758,6 +1789,7 @@ class SessionManager:
                     session.engine,
                     session.session_id,
                     session.model,
+                    session.last_user_message_id,
                 )
         self._save_channel_sessions()
 

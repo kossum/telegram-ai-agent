@@ -38,6 +38,7 @@ PUBLIC_BOT_COMMANDS: tuple[LocalizedBotCommand, ...] = (
     LocalizedBotCommand("usage", "Показать использование контекста", "Show context window usage"),
     LocalizedBotCommand("compact", "Сжать контекст сессии", "Compact the session context"),
     LocalizedBotCommand("cancel", "Отменить текущую обработку", "Cancel current processing"),
+    LocalizedBotCommand("resend", "Повторить последнее сообщение", "Resend last message"),
     LocalizedBotCommand("language", "Сменить язык интерфейса", "Change interface language"),
     LocalizedBotCommand("mode", "Выбрать режим выполнения", "Choose execution mode"),
     LocalizedBotCommand("stream", "Выбрать режим ответов", "Choose response mode"),
