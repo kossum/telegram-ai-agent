@@ -15,7 +15,9 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from aiogram.methods.base import TelegramMethod
 from aiogram.types import ChatIdUnion, Message
@@ -57,13 +59,14 @@ def find_rollout_path(session_id: str) -> Path | None:
         data = _line_json(first)
         if not data or data.get("type") != "session_meta":
             continue
-        payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+        raw_payload = data.get("payload")
+        payload: dict[str, Any] = raw_payload if isinstance(raw_payload, dict) else {}
         if payload.get("id") == session_id:
             matches.append(path.resolve())
     return matches[0] if len(matches) == 1 else None
 
 
-def _line_json(line: str) -> dict | None:
+def _line_json(line: str) -> dict[str, Any] | None:
     line = line.strip()
     if not line:
         return None
@@ -74,7 +77,7 @@ def _line_json(line: str) -> dict | None:
     return obj if isinstance(obj, dict) else None
 
 
-def _user_message_text(payload: dict) -> str | None:
+def _user_message_text(payload: dict[str, Any]) -> str | None:
     """Text of a ``role=user`` message payload, or None when not a user text message.
 
     Codex stores user content as a list of typed parts; only ``input_text``
@@ -118,7 +121,8 @@ def locate_replay_point(path: Path) -> ReplayPoint | None:
         obj = _line_json(lines[index])
         if obj is None:
             continue
-        payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else obj
+        raw_payload = obj.get("payload")
+        payload: dict[str, Any] = raw_payload if isinstance(raw_payload, dict) else obj
         text = _user_message_text(payload)
         if text is not None:
             last_user = (index, text)
@@ -161,7 +165,7 @@ def truncate_to(path: Path, cut_index: int) -> bool:
 
 
 async def fetch_message_text(
-    bot, chat_id: int, message_id: int | None
+    bot: Bot, chat_id: int, message_id: int | None
 ) -> tuple[Message | None, str | None]:
     """Re-fetch a user message's current (possibly edited) text via the Bot API.
 

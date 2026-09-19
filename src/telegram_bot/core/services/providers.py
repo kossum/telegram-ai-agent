@@ -17,6 +17,7 @@ import logging
 import os
 import shutil
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -210,7 +211,7 @@ def extend_agent_env_allowlist(names: set[str]) -> None:
     _CODEX_ENV_ALLOWLIST.update(names)
 
 
-def extra_agent_env_names(source: dict[str, str]) -> set[str]:
+def extra_agent_env_names(source: Mapping[str, str]) -> set[str]:
     """Extra non-secret names from the ``AGENT_EXTRA_ENV`` override.
 
     Comma-separated list of env names passed through to launched agents.
@@ -624,7 +625,7 @@ class CodexAdapter:
         # answer is read from the -o file, so it emits no result_message
         # of its own.
         if event_type == "turn.failed":
-            text = _codex_error_text(data.get("error"))
+            text: str | None = _codex_error_text(data.get("error"))
             return ExecParseResult(
                 [StreamEvent("result_message", text or "Codex turn failed")],
                 done=True,

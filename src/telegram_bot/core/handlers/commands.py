@@ -378,7 +378,10 @@ async def handle_resend(
 
     last_message_id = session.last_user_message_id
     # Prefer the message's current (possibly edited) Telegram text.
-    orig_message, fresh_text = await fetch_message_text(message.bot, key[0], last_message_id)
+    if message.bot is not None:
+        orig_message, fresh_text = await fetch_message_text(message.bot, key[0], last_message_id)
+    else:
+        orig_message, fresh_text = None, None
 
     # 1. Cancel the in-flight turn (kills the codex process, clears the queue).
     await message_queue.cancel(key)
@@ -389,7 +392,7 @@ async def handle_resend(
     async with message_queue.lock_for(key):
         rollout_path = find_rollout_path(session.session_id)
         replay_point = locate_replay_point(rollout_path) if rollout_path else None
-        if replay_point is not None:
+        if replay_point is not None and rollout_path is not None:
             truncate_to(rollout_path, replay_point.cut_index)
         # Freshness order: live Bot-API text, then the newest text we saw
         # for that message (original delivery or a message_edit we cached
