@@ -509,14 +509,14 @@ def test_public_command_handlers_are_wired() -> None:
 def test_public_bot_command_menu_is_public_only() -> None:
     command_names = {command.command for command in build_bot_commands("ru")}
 
-    assert "clear" in command_names
+    assert "new" in command_names
     assert "codex_update" in command_names
     assert "recycle" in command_names
     assert "mcpstatus" in command_names
     assert "restart" in command_names
     assert "tui" in command_names
     assert "tail" in command_names
-    assert "new" not in command_names
+    assert "clear" not in command_names
     assert "day" not in command_names
 
 
@@ -1474,6 +1474,90 @@ async def test_resume_number_switches_subprocess_session(
     assert "Now on session" in message.answer.await_args.args[0]
 
 
+
+async def test_new_busy_shows_confirm(tmp_path: Path, monkeypatch) -> None:
+    """A running turn makes /new ask to confirm instead of silently killing."""
+    (
+        message, session_manager, topic_config, tmux_manager,
+        _picker_store, message_queue, _bot_defaults,
+    ) = _resume_test_fixture(tmp_path, monkeypatch)
+    message_queue.is_busy.return_value = True
+    message.text = "/new"
+    await commands.handle_new(
+        message, session_manager, message_queue, MagicMock(), tmux_manager, topic_config
+    )
+    sent = message.answer.await_args
+    assert sent.args[0].startswith("\u23f3")
+    assert sent.kwargs.get("reply_markup") is not None
+    session_manager.kill_session.assert_not_called()
+
+
+async def test_new_not_busy_resets(tmp_path: Path, monkeypatch) -> None:
+    """No running turn: /new resets the channel immediately."""
+    (
+        message, session_manager, topic_config, tmux_manager,
+        _picker_store, message_queue, _bot_defaults,
+    ) = _resume_test_fixture(tmp_path, monkeypatch)
+    message_queue.is_busy.return_value = False
+    tmux_manager.is_active.return_value = False
+    message_queue.clear = AsyncMock()
+    session_manager.kill_session = AsyncMock()
+    forward_batcher = MagicMock()
+    message.text = "/new"
+    await commands.handle_new(
+        message, session_manager, message_queue, forward_batcher, tmux_manager, topic_config
+    )
+    session_manager.kill_session.assert_awaited_once()
+    assert message.answer.await_args.args[0] == "New session"
+
+
+def _busy_confirm_callback(cb_data: str, monkeypatch, tmp_path: Path):
+    (
+        message, session_manager, topic_config, tmux_manager,
+        picker_store, message_queue, bot_defaults,
+    ) = _resume_test_fixture(tmp_path, monkeypatch)
+    tmux_manager.is_active.return_value = False
+    message.edit_text = AsyncMock()
+    session_manager.cancel = AsyncMock()
+    session_manager.kill_session = AsyncMock()
+    message_queue.clear = AsyncMock()
+    cb = MagicMock()
+    cb.data = cb_data
+    cb.message = message
+    cb.answer = AsyncMock()
+    return (
+        cb, message, session_manager, topic_config,
+        tmux_manager, picker_store, message_queue, bot_defaults,
+    )
+
+
+async def test_busy_confirm_new_proceeds(tmp_path: Path, monkeypatch) -> None:
+    cb, _message, sm, tc, tm, ps, mq, bd = _busy_confirm_callback("bcn:y", monkeypatch, tmp_path)
+    await commands.on_busy_confirm(
+        cb, sm, mq, MagicMock(), tm, tc, bd, ps
+    )
+    sm.cancel.assert_awaited_once_with((1, None))
+    sm.kill_session.assert_awaited_once()
+
+
+async def test_busy_confirm_new_keeps(tmp_path: Path, monkeypatch) -> None:
+    cb, message, sm, tc, tm, ps, mq, bd = _busy_confirm_callback("bcn:n", monkeypatch, tmp_path)
+    await commands.on_busy_confirm(cb, sm, mq, MagicMock(), tm, tc, bd, ps)
+    sm.cancel.assert_not_awaited()
+    message.edit_text.assert_awaited()
+
+
+async def test_busy_confirm_resume_proceeds(tmp_path: Path, monkeypatch) -> None:
+    cb, message, sm, tc, tm, ps, mq, bd = _busy_confirm_callback("bcr:1:y", monkeypatch, tmp_path)
+    message.text = "/resume"
+    await commands.handle_resume(
+        message, sm, tc, tm, ps, mq, bd
+    )
+    await commands.on_busy_confirm(cb, sm, mq, MagicMock(), tm, tc, bd, ps)
+    sm.cancel.assert_awaited_once_with((1, None))
+    sm.override_session.assert_awaited_once()
+
+
 async def test_mcpstatus_subprocess_reports_tagged_processes(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1533,8 +1617,12 @@ async def test_restart_reexecs_same_pid(tmp_path: Path, monkeypatch) -> None:
         commands.os, "kill", lambda pid, sig: killed.append(pid)
     )
     monkeypatch.setattr(commands, "_descendant_pids", lambda self_pid: {42, 43})
+    message_queue = MagicMock()
+    message_queue.is_busy.return_value = False
+    tmux_manager = MagicMock()
+    tmux_manager.is_processing.return_value = False
 
-    await commands.handle_restart(message, session_manager)
+    await commands.handle_restart(message, session_manager, message_queue, tmux_manager)
 
     message.answer.assert_awaited_once()
     assert killed == [42, 43] or set(killed) == {42, 43}
@@ -1564,14 +1652,64 @@ async def test_restart_execv_failure_notifies(tmp_path: Path, monkeypatch) -> No
         raise OSError("ENOENT")
     monkeypatch.setattr(commands.os, "execv", boom)
     monkeypatch.setattr(commands, "_descendant_pids", lambda self_pid: set())
+    message_queue = MagicMock()
+    message_queue.is_busy.return_value = False
+    tmux_manager = MagicMock()
+    tmux_manager.is_processing.return_value = False
 
-    await commands.handle_restart(message, session_manager)
+    await commands.handle_restart(message, session_manager, message_queue, tmux_manager)
 
     texts = [c.args[0] for c in message.answer.await_args_list]
     assert texts[-1] == t("ui.restart_failed", err="ENOENT")
     marker = restart_state.load(session_manager.restart_state_path)
     assert marker is not None
     assert marker.attempts == 1
+
+
+async def test_restart_busy_shows_confirm(tmp_path: Path, monkeypatch) -> None:
+    """A running turn makes /restart ask to confirm instead of re-exec'ing."""
+    from telegram_bot.core.services import restart_state
+
+    message = MagicMock()
+    message.answer = AsyncMock()
+    message.chat.id = 1
+    message.message_thread_id = None
+    session_manager = MagicMock()
+    session_manager.restart_state_path = tmp_path / "restart_state.json"
+    message_queue = MagicMock()
+    message_queue.is_busy.return_value = True
+    tmux_manager = MagicMock()
+    tmux_manager.is_processing.return_value = False
+
+    await commands.handle_restart(message, session_manager, message_queue, tmux_manager)
+
+    sent = message.answer.await_args
+    assert sent.args[0] == t("ui.busy_confirm_restart")
+    assert sent.kwargs.get("reply_markup") is not None
+    assert restart_state.load(session_manager.restart_state_path) is None
+
+
+async def test_restart_confirm_proceeds(tmp_path: Path, monkeypatch) -> None:
+    """Confirming a busy /restart re-execs in place."""
+    from telegram_bot.core.services import restart_state
+
+    cb, _message, sm, tc, tm, ps, mq, bd = _busy_confirm_callback(
+        "bcrst:y", monkeypatch, tmp_path
+    )
+    sm.restart_state_path = tmp_path / "restart_state.json"
+    execv_calls: list = []
+    monkeypatch.setattr(
+        commands.os, "execv", lambda path, argv: execv_calls.append((path, argv))
+    )
+    monkeypatch.setattr(commands, "_descendant_pids", lambda self_pid: set())
+    monkeypatch.setattr(commands.asyncio, "sleep", AsyncMock())
+
+    await commands.on_busy_confirm(cb, sm, mq, MagicMock(), tm, tc, bd, ps)
+
+    assert len(execv_calls) == 1
+    marker = restart_state.load(sm.restart_state_path)
+    assert marker is not None
+    assert marker.attempts == 0
 
 
 async def test_restart_marker_first_attempt_silent(tmp_path: Path, monkeypatch) -> None:

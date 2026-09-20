@@ -30,6 +30,7 @@ from telegram_bot.core.keyboards import (
     RESUME_PAGE_SIZE,
     _format_age,
     _format_size,
+    busy_confirm_keyboard,
     engine_keyboard,
     exec_mode_keyboard,
     resume_keyboard,
@@ -219,9 +220,8 @@ def _descendant_pids(self_pid: int) -> set[int]:
     return seen
 
 
-@router.message(Command("restart"))
-async def handle_restart(message: Message, session_manager: SessionManager) -> None:
-    """Restart this bot process in place via os.execv (same PID)."""
+async def _restart_process(message: Message, session_manager: SessionManager) -> None:
+    """Perform the in-place os.execv re-exec (same PID) for /restart."""
     state_path = session_manager.restart_state_path
     state = restart_state.load(state_path)
     state = restart_state.record_request(
@@ -246,6 +246,25 @@ async def handle_restart(message: Message, session_manager: SessionManager) -> N
         cur.attempts = 1
         restart_state.save(state_path, cur)
         await message.answer(t("ui.restart_failed", err=str(exc)))
+
+
+@router.message(Command("restart"))
+async def handle_restart(
+    message: Message,
+    session_manager: SessionManager,
+    message_queue: MessageQueue,
+    tmux_manager: TmuxManager,
+    force: bool = False,
+) -> None:
+    """Restart the bot in place; confirm first if a turn is running."""
+    key = channel_key(message)
+    if not force and (message_queue.is_busy(key) or tmux_manager.is_processing(key)):
+        await message.answer(
+            t("ui.busy_confirm_restart"),
+            reply_markup=busy_confirm_keyboard("a"),
+        )
+        return
+    await _restart_process(message, session_manager)
 
 
 @router.message(Command("language"))
@@ -374,6 +393,22 @@ async def _reset_channel(
     await message.answer(t("ui.new_session"))
 
 
+async def _maybe_confirm_reset(
+    message: Message,
+    key: ChannelKey,
+    message_queue: MessageQueue,
+    tmux_manager: TmuxManager,
+) -> bool:
+    """Confirm before a /new|/clear that would interrupt a running turn."""
+    if not (message_queue.is_busy(key) or tmux_manager.is_processing(key)):
+        return False
+    await message.answer(
+        t("ui.busy_confirm_new"),
+        reply_markup=busy_confirm_keyboard("n"),
+    )
+    return True
+
+
 @router.message(Command("new"))
 async def handle_new(
     message: Message,
@@ -385,6 +420,8 @@ async def handle_new(
 ) -> None:
     key = channel_key(message)
     logger.debug("User %s requested new session", message.from_user and message.from_user.id)
+    if await _maybe_confirm_reset(message, key, message_queue, tmux_manager):
+        return
     await _reset_channel(
         message, key, session_manager, message_queue, forward_batcher, tmux_manager, topic_config
     )
@@ -401,6 +438,8 @@ async def handle_clear(
 ) -> None:
     key = channel_key(message)
     logger.debug("User %s requested clear", message.from_user and message.from_user.id)
+    if await _maybe_confirm_reset(message, key, message_queue, tmux_manager):
+        return
     await _reset_channel(
         message, key, session_manager, message_queue, forward_batcher, tmux_manager, topic_config
     )
@@ -780,6 +819,7 @@ async def _sessions_switch(
     picker_store: PickerStore,
     message_queue: MessageQueue,
     tmux_manager: TmuxManager,
+    force: bool = False,
 ) -> None:
     """Subprocess /resume N: switch the channel to session number N."""
     state = picker_store.latest_for(key[0], key[1])
@@ -793,8 +833,12 @@ async def _sessions_switch(
     if index < 0 or index >= len(state.entries):
         await message.answer(t("ui.sessions_bad_number", count=len(state.entries)))
         return
-    if message_queue.is_busy(key) or tmux_manager.is_processing(key):
-        await message.answer(t("ui.sessions_busy"))
+    busy = message_queue.is_busy(key) or tmux_manager.is_processing(key)
+    if busy and not force:
+        await message.answer(
+            t("ui.busy_confirm_resume"),
+            reply_markup=busy_confirm_keyboard("r", arg),
+        )
         return
     entry = state.entries[index]
     await session_manager.override_session(key, entry.session_id)
@@ -1073,6 +1117,69 @@ async def on_resume_cancel(callback: CallbackQuery, picker_store: PickerStore) -
         with contextlib.suppress(TelegramBadRequest):
             await callback.message.edit_text(t("ui.resume_cancelled"), reply_markup=None)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bc"))
+async def on_busy_confirm(
+    callback: CallbackQuery,
+    session_manager: SessionManager,
+    message_queue: MessageQueue,
+    forward_batcher: ForwardBatcher,
+    tmux_manager: TmuxManager,
+    topic_config: TopicConfig,
+    bot_defaults: BotDefaults,
+    picker_store: PickerStore,
+) -> None:
+    """Confirm a /new|/resume that would interrupt a running turn."""
+    data = callback.data
+    msg = callback.message
+    if data is None or msg is None or isinstance(msg, InaccessibleMessage):
+        await _answer_callback_safely(callback)
+        return
+    key = _callback_key(callback)
+    if key is None:
+        await _answer_callback_safely(callback)
+        return
+    parts = data.split(":")
+    head = parts[0]
+    yes = parts[-1] == "y"
+    if head == "bcn":
+        action, arg = "n", ""
+    elif head == "bcr":
+        action, arg = "r", parts[1]
+    elif head == "bcrst":
+        action, arg = "a", ""
+    else:
+        await _answer_callback_safely(callback)
+        return
+    if not yes:
+        with contextlib.suppress(TelegramBadRequest):
+            await msg.edit_text(t("ui.busy_kept"), reply_markup=None)
+        await _answer_callback_safely(callback, t("ui.busy_kept"))
+        return
+    if action == "n":
+        orig = t("ui.busy_confirm_new")
+    elif action == "r":
+        orig = t("ui.busy_confirm_resume")
+    else:
+        orig = t("ui.busy_confirm_restart")
+    with contextlib.suppress(TelegramBadRequest):
+        await msg.edit_text(orig, reply_markup=None)
+    await session_manager.cancel(key)
+    if action == "n":
+        await _reset_channel(
+            msg, key, session_manager, message_queue, forward_batcher,
+            tmux_manager, topic_config,
+        )
+    elif action == "r":
+        runtime = resolve_topic_runtime_config(topic_config.get_topic(key[1]), bot_defaults)
+        await _sessions_switch(
+            msg, runtime, key, arg, session_manager, picker_store,
+            message_queue, tmux_manager, force=True,
+        )
+    else:
+        await _restart_process(msg, session_manager)
+    await _answer_callback_safely(callback)
 
 
 @router.message(Command("stream"))

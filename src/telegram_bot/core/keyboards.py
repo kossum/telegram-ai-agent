@@ -115,6 +115,28 @@ def engine_keyboard(current_engine: str | None = None) -> InlineKeyboardMarkup:
     )
 
 
+def busy_confirm_keyboard(action: str, arg: str = "") -> InlineKeyboardMarkup:
+    """Two-button confirm for a command that interrupts a running turn
+    (/new, /resume N, /restart). `action` is 'n', 'r', or 'a' (restart);
+    `arg` is the resume number (only used by 'r').""" 
+    if action == "n":
+        head = "bcn"
+    elif action == "r":
+        head = f"bcr:{arg}"
+    else:
+        head = "bcrst"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="\u2702\ufe0f Cancel & continue", callback_data=f"{head}:y"
+                ),
+                InlineKeyboardButton(text="\u23f8 Keep running", callback_data=f"{head}:n"),
+            ],
+        ],
+    )
+
+
 def resume_keyboard(
     entries: tuple[SessionEntry, ...] | list[SessionEntry],
     *,
