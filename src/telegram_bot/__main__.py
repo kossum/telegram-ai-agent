@@ -215,7 +215,7 @@ async def _start() -> None:
     tmux_manager.wire_live_buffer(bot=bot, topic_config=topic_config)
     session_manager = SessionManager(settings, topic_config=topic_config)
     tmux_manager.restore_all(session_manager)
-    picker_store = PickerStore()
+    picker_store = PickerStore(ttl_sec=1800)
     bot_defaults = BotDefaults(
         cwd=settings.resolve_workspace_path(settings.default_cwd),
         mcp_config=Path(session_manager.default_mcp_config_path()),

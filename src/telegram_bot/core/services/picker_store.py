@@ -48,3 +48,27 @@ class PickerStore:
 
     def drop(self, token: str) -> None:
         self._states.pop(token, None)
+
+    def latest_for(
+        self, chat_id: int, thread_id: int | None
+    ) -> PickerState | None:
+        """Most recent live state for one channel, or None.
+
+        /resume N refers to the channel's latest /resume list, so no
+        token is needed. Expired states are dropped lazily, like get().
+        """
+        now = self._clock()  # type: ignore[operator]
+        best_token: str | None = None
+        best_at = 0.0
+        for token, state in list(self._states.items()):
+            if (state.chat_id, state.thread_id) != (chat_id, thread_id):
+                continue
+            if now - state.created_at > self._ttl_sec:
+                self._states.pop(token, None)
+                continue
+            if state.created_at >= best_at:
+                best_at = state.created_at
+                best_token = token
+        if best_token is None:
+            return None
+        return self._states.get(best_token)

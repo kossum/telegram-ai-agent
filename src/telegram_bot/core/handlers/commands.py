@@ -54,11 +54,15 @@ from telegram_bot.core.services.context_usage import (
 )
 from telegram_bot.core.services.message_queue import MessageQueue
 from telegram_bot.core.services.picker_store import PickerState, PickerStore
-from telegram_bot.core.services.providers import engine_display_name
+from telegram_bot.core.services.providers import (
+    choose_available_engine,
+    engine_display_name,
+)
 from telegram_bot.core.services.resume_listing import (
     SessionEntry,
     _same_cwd,
     get_last_assistant_message,
+    list_recent,
     list_sessions,
 )
 from telegram_bot.core.services.telegram_utils import send_html_with_fallback
@@ -70,7 +74,11 @@ from telegram_bot.core.services.topic_config import (
     Engine,
     TopicConfig,
 )
-from telegram_bot.core.services.topic_runtime import BotDefaults, resolve_topic_runtime_config
+from telegram_bot.core.services.topic_runtime import (
+    BotDefaults,
+    TopicRuntimeConfig,
+    resolve_topic_runtime_config,
+)
 from telegram_bot.core.types import ChannelKey, channel_key
 from telegram_bot.core.utils.telegram_html import split_html_message
 
@@ -597,6 +605,98 @@ async def handle_recycle(
         await message.answer(t("ui.tmux_not_active"))
 
 
+def _command_arg(message: Message) -> str | None:
+    """First space-separated argument of a slash command message, if any."""
+    tokens = (message.text or "").split()
+    if len(tokens) < 2:
+        return None
+    return tokens[1]
+
+
+def _sessions_caption(
+    entries: tuple[SessionEntry, ...],
+    current_session_id: str | None,
+    cwd: str,
+) -> str:
+    lines = [
+        t("ui.sessions_header", cwd=html.escape(cwd)),
+        "",
+    ]
+    for index, entry in enumerate(entries, start=1):
+        marker = (
+            f" ({t('ui.resume_current_marker')})"
+            if entry.session_id == current_session_id
+            else ""
+        )
+        lines.append(f"{index}. {html.escape(entry.preview)}{marker}")
+    lines.append("")
+    lines.append(t("ui.sessions_hint", count=len(entries)))
+    return "\n".join(lines)
+
+
+async def _sessions_list(
+    message: Message,
+    runtime: TopicRuntimeConfig,
+    key: ChannelKey,
+    session_manager: SessionManager,
+    picker_store: PickerStore,
+) -> None:
+    """Subprocess /resume: numbered list of the most recent sessions."""
+    engine = choose_available_engine(runtime.engine) or runtime.engine
+    entries = await asyncio.to_thread(list_recent, runtime.cwd, engine)
+    if not entries:
+        await message.answer(t("ui.resume_no_sessions"))
+        return
+    state = PickerState(
+        chat_id=key[0],
+        thread_id=key[1],
+        cwd=runtime.cwd,
+        engine=engine,
+        entries=tuple(entries),
+        created_at=time.time(),
+    )
+    picker_store.put(state)
+    current = session_manager.get_current_session_id(key)
+    await message.answer(
+        _sessions_caption(tuple(entries), current, str(runtime.cwd)),
+        parse_mode="HTML",
+    )
+
+
+
+async def _sessions_switch(
+    message: Message,
+    runtime: TopicRuntimeConfig,
+    key: ChannelKey,
+    arg: str,
+    session_manager: SessionManager,
+    picker_store: PickerStore,
+    message_queue: MessageQueue,
+    tmux_manager: TmuxManager,
+) -> None:
+    """Subprocess /resume N: switch the channel to session number N."""
+    state = picker_store.latest_for(key[0], key[1])
+    if state is None or not _same_cwd(runtime.cwd, state.cwd):
+        await message.answer(t("ui.sessions_stale"))
+        return
+    try:
+        index = int(arg) - 1
+    except ValueError:
+        index = -1
+    if index < 0 or index >= len(state.entries):
+        await message.answer(t("ui.sessions_bad_number", count=len(state.entries)))
+        return
+    if message_queue.is_busy(key) or tmux_manager.is_processing(key):
+        await message.answer(t("ui.sessions_busy"))
+        return
+    entry = state.entries[index]
+    await session_manager.override_session(key, entry.session_id)
+    await message.answer(
+        t("ui.sessions_switched", sid=entry.session_id[:8]),
+        parse_mode="HTML",
+    )
+
+
 @router.message(Command("resume"))
 async def handle_resume(
     message: Message,
@@ -604,15 +704,32 @@ async def handle_resume(
     topic_config: TopicConfig,
     tmux_manager: TmuxManager,
     picker_store: PickerStore,
+    message_queue: MessageQueue,
     bot_defaults: BotDefaults,
 ) -> None:
-    """Open server-side picker with resumable Claude/Codex sessions."""
+    """List resumable sessions; in subprocess mode /resume N switches."""
     key = channel_key(message)
+    runtime = resolve_topic_runtime_config(topic_config.get_topic(key[1]), bot_defaults)
+    if runtime.exec_mode == "subprocess":
+        arg = _command_arg(message)
+        if arg is None:
+            await _sessions_list(message, runtime, key, session_manager, picker_store)
+        else:
+            await _sessions_switch(
+                message,
+                runtime,
+                key,
+                arg,
+                session_manager,
+                picker_store,
+                message_queue,
+                tmux_manager,
+            )
+        return
     if key[1] is None:
         await message.answer(t("ui.resume_not_in_forum"))
         return
 
-    runtime = resolve_topic_runtime_config(topic_config.get_topic(key[1]), bot_defaults)
     entries = tuple(await asyncio.to_thread(list_sessions, runtime.cwd))
     if not entries:
         await message.answer(t("ui.resume_no_sessions"))

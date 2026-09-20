@@ -213,6 +213,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         ),
         "ui.resume_config_write_failed": "Failed to update engine; nothing changed",
         "ui.resume_cancelled": "Cancelled",
+        "ui.sessions_header": "Sessions for {cwd}:",
+        "ui.sessions_hint": ("Reply with a number (1-{count}) to switch to that session."),
+        "ui.sessions_bad_number": ("Reply with a number between 1 and {count}."),
+        "ui.sessions_stale": "The session list expired; use /resume again",
+        "ui.sessions_busy": "This channel is busy; try again in a moment",
+        "ui.sessions_switched": (
+            "🔄 Now on session <code>{sid}</code> — the next message continues it"
+        ),
         "ui.error_generic": "An error occurred while processing the request. Try again.",
         "ui.cc_not_found": "Claude Code not found. Make sure it is installed and on PATH.",
         "ui.agent_cli_not_found": (
@@ -515,6 +523,12 @@ MESSAGES: dict[str, dict[str, str]] = {
         ),
         "ui.resume_config_write_failed": "Не удалось обновить engine; ничего не изменено",
         "ui.resume_cancelled": "Отменено",
+        "ui.sessions_header": "Сессии для {cwd}:",
+        "ui.sessions_hint": ("Ответь числом (1-{count}), чтобы переключиться на эту сессию."),
+        "ui.sessions_bad_number": ("Ответь числом от 1 до {count}."),
+        "ui.sessions_stale": "Список сессий протух; используй /resume ещё раз",
+        "ui.sessions_busy": "Канал занят; попробуй чуть позже",
+        "ui.sessions_switched": ("🔄 Сессия <code>{sid}</code> — следующее сообщение продолжит её"),
         "ui.error_generic": "Произошла ошибка при обработке запроса. Попробуй ещё раз.",
         "ui.cc_not_found": (
             "Claude Code не найден. Убедитесь, что он установлен и доступен в PATH."

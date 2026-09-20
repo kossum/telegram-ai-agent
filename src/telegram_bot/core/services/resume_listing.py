@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -256,3 +256,149 @@ def _normalize_cwd(value: str | Path) -> str:
 
 def _same_cwd(left: str | Path, right: str | Path) -> bool:
     return _normalize_cwd(left) == _normalize_cwd(right)
+
+
+# --- Recent-session listing for the subprocess /resume list -------------
+
+# New-session prompts are prefixed with the mode prompt + a
+# <telegram-context> block; codex CLI injects AGENTS.md as a separate
+# user-role message. Both are noise in a "first user message" preview.
+_TG_CONTEXT_END = "</telegram-context>"
+
+
+def _is_agents_md_injection(text: str) -> bool:
+    if not text:
+        return False
+    head = text.lstrip()[:200]
+    return "<INSTRUCTIONS>" in head or head.startswith("# AGENTS.md")
+
+
+def _strip_bot_boilerplate(text: str) -> str:
+    """Drop injected prefix so previews show the user's own words."""
+    text = (text or "").strip()
+    if not text or _is_agents_md_injection(text):
+        return ""
+    if _TG_CONTEXT_END in text:
+        text = text.split(_TG_CONTEXT_END, 1)[1]
+    return text.strip()
+
+
+def _first_codex_user_text(path: Path) -> str:
+    """First real user message from a codex rollout (TUI or exec).
+
+    Codex stores user input as response_item message/role=user parts;
+    the injected AGENTS.md and bot prompt prefixes are user-role too,
+    so the boilerplate strip decides what counts as the user's words.
+    """
+    for data in _iter_jsonl_soft(path):
+        if not isinstance(data, dict) or data.get("type") != "response_item":
+            continue
+        payload = data.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("type") != "message" or payload.get("role") != "user":
+            continue
+        text = _strip_bot_boilerplate(_extract_text(payload))
+        if _meaningful_preview(text):
+            return _truncate(text)
+    return ""
+
+
+def _first_claude_user_text(path: Path) -> str:
+    """First real user message from a claude transcript.
+
+    The bot's new-session prompt (mode prompt + <telegram-context>)
+    is stored as the first user entry; strip it before truncating
+    (unlike _preview_claude, which truncates the raw boilerplate).
+    """
+    for data in _iter_jsonl_soft(path):
+        if not isinstance(data, dict) or data.get("type") != "user":
+            continue
+        text = _strip_bot_boilerplate(_extract_text(data.get("message")))
+        if _meaningful_preview(text):
+            return _truncate(text)
+    return ""
+
+
+def _codex_meta_relaxed(path: Path, *, max_records: int = 3) -> tuple[str, str] | None:
+    """Like _codex_meta but accepts TUI and exec rollouts alike.
+
+    Used by the subprocess /resume list, where resuming a session does
+    not require it to have been opened in the TUI. Subagent rollouts
+    are excluded the same way as in _codex_meta.
+    """
+    for idx, data in enumerate(_iter_jsonl_soft(path)):
+        if idx >= max_records:
+            return None
+        if not isinstance(data, dict) or data.get("type") != "session_meta":
+            continue
+        payload = data.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        source = payload.get("source")
+        if isinstance(source, dict) and "subagent" in source:
+            continue
+        if source == "subagent":
+            continue
+        originator = payload.get("originator", "")
+        if originator not in ("codex-tui", "codex_exec") and source != "exec":
+            continue
+        session_id = payload.get("id") or payload.get("session_id")
+        cwd = payload.get("cwd")
+        if (
+            isinstance(session_id, str)
+            and isinstance(cwd, str)
+            and _CODEX_SESSION_ID_RE.fullmatch(session_id)
+        ):
+            return session_id, cwd
+    return None
+
+
+def list_recent(
+    cwd: str | Path,
+    engine: EngineName,
+    *,
+    limit: int = 20,
+    home: Path | None = None,
+) -> list[SessionEntry]:
+    """Most recent sessions for one engine, newest first, capped at limit.
+
+    Differs from list_sessions() in two ways: only the requested engine
+    is listed (subprocess resume cannot switch engines implicitly), and
+    previews are the user's own first words with injected boilerplate
+    stripped, so exec rollouts are identifiable in the /resume list.
+    """
+    home = home or Path.home()
+    cwd_path = Path(cwd)
+    if engine == "claude":
+        raw = _list_claude_sessions(cwd_path, home)
+        entries: list[SessionEntry] = []
+        for entry in raw:
+            preview = _first_claude_user_text(entry.transcript_path)
+            entries.append(replace(entry, preview=preview or entry.session_id[:8]))
+    else:
+        root = home / ".codex" / "sessions"
+        entries = []
+        if root.exists():
+            for path in root.glob("**/*.jsonl"):
+                meta = _codex_meta_relaxed(path)
+                if meta is None or not _same_cwd(meta[1], cwd_path):
+                    continue
+                stat = _safe_stat(path)
+                if stat is None:
+                    continue
+                session_id = meta[0]
+                preview = (
+                    _first_codex_user_text(path) or session_id[:8]
+                )
+                entries.append(
+                    SessionEntry(
+                        provider="codex",
+                        session_id=session_id,
+                        transcript_path=path,
+                        preview=preview,
+                        mtime=stat.st_mtime,
+                        size_bytes=stat.st_size,
+                    )
+                )
+    return sorted(entries, key=lambda e: e.mtime, reverse=True)[:limit]

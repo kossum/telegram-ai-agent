@@ -15,12 +15,14 @@ from telegram_bot.core.services import cc_modes
 from telegram_bot.core.services.bot_commands import build_bot_commands
 from telegram_bot.core.services.cc_events import mcp_server_event_by_name
 from telegram_bot.core.services.claude import SessionManager
+from telegram_bot.core.services.picker_store import PickerState, PickerStore
 from telegram_bot.core.services.providers import (
     CODEX_ADAPTER,
     CodexTranscriptParser,
     agent_process_env,
     choose_available_engine,
 )
+from telegram_bot.core.services.resume_listing import list_recent
 from telegram_bot.core.services.rich_sender import detect_rich_send
 from telegram_bot.core.services.tmux_spawn import (
     sanitized_tmux_environment,
@@ -208,7 +210,7 @@ def test_public_start_wires_codex_update_and_tail_runtime() -> None:
     assert "tmux_manager.start_transcript_watchdog()" in source
     assert "await tmux_manager.stop_transcript_watchdog()" in source
     assert "await tmux_manager.stop_modal_watchdog()" in source
-    assert "picker_store = PickerStore()" in source
+    assert "picker_store = PickerStore(ttl_sec=1800)" in source
     assert "bot_defaults = BotDefaults(" in source
     assert 'dp["picker_store"] = picker_store' in source
     assert 'dp["bot_defaults"] = bot_defaults' in source
@@ -892,6 +894,7 @@ async def test_stream_retries_after_repairing_poisoned_rollout(tmp_path: Path, m
     )
 
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    monkeypatch.delenv("AGENT_WORKSPACE_ROOT", raising=False)
     settings = Settings(
         _env_file=None,
         telegram_bot_token="test-token",
@@ -1194,6 +1197,7 @@ def test_resend_edit_text_caching(tmp_path: Path, monkeypatch) -> None:
     from telegram_bot.core.services.claude import SessionManager
 
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    monkeypatch.delenv("AGENT_WORKSPACE_ROOT", raising=False)
     settings = Settings(
         _env_file=None,
         telegram_bot_token="test-token",
@@ -1244,3 +1248,217 @@ def test_resend_find_rollout_path(tmp_path: Path, monkeypatch) -> None:
         [{"type": "session_meta", "payload": {"id": "sess-9", "originator": "codex_exec"}}],
     )
     assert roll.find_rollout_path("sess-9") is None
+
+
+def _meta_line(session_id: str, *, cwd: str, originator: str) -> dict:
+    return {
+        "type": "session_meta",
+        "payload": {
+            "id": session_id,
+            "session_id": session_id,
+            "cwd": cwd,
+            "originator": originator,
+            "source": "exec" if originator == "codex_exec" else "tui",
+        },
+    }
+
+
+def test_list_recent_finds_exec_rollout_with_first_user_preview(tmp_path: Path) -> None:
+    cwd = tmp_path / "proj"
+    home = tmp_path / "home"
+    session_id = "01a0bd73-3903-7c72-bede-bc5157a8f750"
+    rollout = home / ".codex" / "sessions" / "2026" / "09" / "20"
+    rollout.mkdir(parents=True)
+    _write_rollout(
+        rollout / f"rollout-2026-09-20T15-14-00-{session_id}.jsonl",
+        [
+            _meta_line(session_id, cwd=str(cwd), originator="codex_exec"),
+            _user_line("# AGENTS.md instructions for /proj\n\n<INSTRUCTIONS>\nstuff"),
+            _user_line(
+                "You are an assistant in a Telegram chat.\n"
+                "<telegram-context>\nchat_id: 1\n</telegram-context>\n\n"
+                "hello from the user"
+            ),
+        ],
+    )
+    entries = list_recent(str(cwd), "codex", home=home)
+    assert len(entries) == 1
+    assert entries[0].session_id == session_id
+    assert entries[0].preview == "hello from the user"
+
+
+def test_list_recent_claude_strips_bot_boilerplate_from_preview(tmp_path: Path) -> None:
+    from telegram_bot.core.tui.paths import cwd_to_slug
+
+    cwd = tmp_path / "proj"
+    home = tmp_path / "home"
+    session_id = "01a0bd73-3903-4c72-bede-bc5157a8f750"
+    root = home / ".claude" / "projects" / cwd_to_slug(str(cwd))
+    root.mkdir(parents=True)
+    prompt = (
+        "You are an assistant in a Telegram chat.\n"
+        "<telegram-context>\nchat_id: 1\n</telegram-context>\n\n"
+        "hello from the user"
+    )
+    (root / f"{session_id}.jsonl").write_text(
+        json.dumps(
+            {"type": "user", "message": {"role": "user", "content": prompt}}
+        )
+        + "\n"
+    )
+    entries = list_recent(str(cwd), "claude", home=home)
+    assert len(entries) == 1
+    assert entries[0].provider == "claude"
+    assert entries[0].preview == "hello from the user"
+
+
+def test_picker_store_latest_for_returns_newest_live_state() -> None:
+    clock = {"now": 100.0}
+    store = PickerStore(ttl_sec=1800, clock=lambda: clock["now"])
+    entry_a = PickerState(
+        chat_id=1,
+        thread_id=None,
+        cwd=Path("/proj"),
+        engine="codex",
+        entries=(),
+        created_at=100.0,
+    )
+    token_a = store.put(entry_a)
+    entry_b = PickerState(
+        chat_id=1,
+        thread_id=None,
+        cwd=Path("/proj"),
+        engine="codex",
+        entries=(),
+        created_at=160.0,
+    )
+    token_b = store.put(entry_b)
+    assert token_a != token_b
+    assert store.latest_for(1, None) is entry_b
+    assert store.latest_for(2, None) is None
+    clock["now"] = 100.0 + 1801
+    assert store.latest_for(1, None) is entry_b
+    clock["now"] = 160.0 + 1801
+    assert store.latest_for(1, None) is None
+
+
+def _resume_test_fixture(tmp_path: Path, monkeypatch) -> tuple:
+    """Shared fixture: codex exec rollout + stubbed handler deps."""
+    from unittest.mock import MagicMock
+
+    from telegram_bot.core.services.topic_config import TopicSettings
+    from telegram_bot.core.services.topic_runtime import BotDefaults
+
+    cwd = tmp_path / "proj"
+    home = tmp_path / "home"
+    session_id = "01a0bd73-3903-7c72-bede-bc5157a8f750"
+    rollout = home / ".codex" / "sessions" / "2026" / "09" / "20"
+    rollout.mkdir(parents=True)
+    _write_rollout(
+        rollout / f"rollout-2026-09-20T15-14-00-{session_id}.jsonl",
+        [
+            _meta_line(session_id, cwd=str(cwd), originator="codex_exec"),
+            _user_line(
+                "You are an assistant in a Telegram chat.\n"
+                "<telegram-context>\nchat_id: 1\n</telegram-context>\n\n"
+                "hello from the user"
+            ),
+        ],
+    )
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(commands, "choose_available_engine", lambda p: "codex")
+    message = MagicMock()
+    message.chat.id = 1
+    message.message_thread_id = None
+    message.answer = AsyncMock()
+    session_manager = MagicMock()
+    session_manager.get_current_session_id.return_value = None
+    session_manager.override_session = AsyncMock()
+    message_queue = MagicMock()
+    message_queue.is_busy.return_value = False
+    tmux_manager = MagicMock()
+    tmux_manager.is_processing.return_value = False
+    topic_config = MagicMock()
+    topic_config.get_topic.return_value = TopicSettings(
+        name="", type="project", mode="free", cwd=None, mcp_config=None
+    )
+    bot_defaults = BotDefaults(cwd=cwd, mcp_config=tmp_path / "mcp.json")
+    return (
+        message,
+        session_manager,
+        topic_config,
+        tmux_manager,
+        commands.PickerStore(),
+        message_queue,
+        bot_defaults,
+    )
+
+
+async def test_resume_subprocess_lists_sessions_with_numbers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (
+        message,
+        session_manager,
+        topic_config,
+        tmux_manager,
+        picker_store,
+        message_queue,
+        bot_defaults,
+    ) = _resume_test_fixture(tmp_path, monkeypatch)
+    message.text = "/resume"
+    await commands.handle_resume(
+        message,
+        session_manager,
+        topic_config,
+        tmux_manager,
+        picker_store,
+        message_queue,
+        bot_defaults,
+    )
+    sent = message.answer.await_args
+    assert sent.args[0].startswith("Sessions for")
+    assert "1. hello from the user" in sent.args[0]
+    state = picker_store.latest_for(1, None)
+    assert state is not None
+    assert len(state.entries) == 1
+
+
+async def test_resume_number_switches_subprocess_session(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (
+        message,
+        session_manager,
+        topic_config,
+        tmux_manager,
+        picker_store,
+        message_queue,
+        bot_defaults,
+    ) = _resume_test_fixture(tmp_path, monkeypatch)
+
+    message.text = "/resume"
+    await commands.handle_resume(
+        message,
+        session_manager,
+        topic_config,
+        tmux_manager,
+        picker_store,
+        message_queue,
+        bot_defaults,
+    )
+    message.answer.reset_mock()
+    message.text = "/resume 1"
+    await commands.handle_resume(
+        message,
+        session_manager,
+        topic_config,
+        tmux_manager,
+        picker_store,
+        message_queue,
+        bot_defaults,
+    )
+    session_manager.override_session.assert_awaited_once_with(
+        (1, None), "01a0bd73-3903-7c72-bede-bc5157a8f750"
+    )
+    assert "Now on session" in message.answer.await_args.args[0]
