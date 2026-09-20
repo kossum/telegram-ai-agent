@@ -851,7 +851,9 @@ class SessionManager:
 
         try:
             result_text, new_session_id = await asyncio.wait_for(
-                self._read_stream(process, on_event, provider=session.engine),
+                self._read_stream(
+                    process, on_event, provider=session.engine, session=session
+                ),
                 timeout=self._settings.cc_query_timeout_sec,
             )
         except TimeoutError:
@@ -1061,6 +1063,7 @@ class SessionManager:
         process: asyncio.subprocess.Process,
         on_event: Callable[[StreamEvent], Awaitable[bool | None] | bool | None],
         provider: str = "claude",
+        session: SessionData | None = None,
     ) -> tuple[str, str | None]:
         """Read stream-json lines from process stdout, dispatch events.
 
@@ -1131,6 +1134,8 @@ class SessionManager:
                 )
             if new_sid:
                 session_id = new_sid
+                if session is not None and session.session_id is None:
+                    session.session_id = new_sid
 
             for event in events:
                 if event.type == "result":
