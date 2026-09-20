@@ -1462,3 +1462,38 @@ async def test_resume_number_switches_subprocess_session(
         (1, None), "01a0bd73-3903-7c72-bede-bc5157a8f750"
     )
     assert "Now on session" in message.answer.await_args.args[0]
+
+
+async def test_mcpstatus_subprocess_reports_tagged_processes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """In subprocess mode /mcpstatus reports channel-tagged MCP processes."""
+    from telegram_bot.core.services.process_cleanup import RuntimeProcess
+
+    message = MagicMock()
+    message.chat.id = 1
+    message.message_thread_id = None
+    message.answer = AsyncMock()
+    topic_config = MagicMock()
+    topic_config.get_topic.return_value = TopicSettings(
+        name="",
+        type="project",
+        mode="free",
+        cwd=str(tmp_path),
+        mcp_config=None,
+        exec_mode="subprocess",
+    )
+    bot_defaults = BotDefaults(cwd=tmp_path, mcp_config=tmp_path / "mcp.json")
+    tmux_manager = MagicMock()
+    tmux_manager._configured_mcp_servers.return_value = ("gods",)
+    proc = RuntimeProcess(
+        pid=42, ppid=1, pgid=42, sid=42, rss_kb=2048,
+        command="node", args="node mcp-server",
+    )
+    monkeypatch.setattr(commands, "tagged_processes", lambda **kw: (proc,))
+    await commands.handle_mcpstatus(message, tmux_manager, topic_config, bot_defaults)
+    sent = message.answer.await_args.args[0]
+    assert "mode: subprocess" in sent
+    assert "configured: gods" in sent
+    assert "tagged_processes: 1" in sent
+    assert "rss_mb: 2.0" in sent

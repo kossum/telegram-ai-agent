@@ -54,6 +54,10 @@ from telegram_bot.core.services.context_usage import (
 )
 from telegram_bot.core.services.message_queue import MessageQueue
 from telegram_bot.core.services.picker_store import PickerState, PickerStore
+from telegram_bot.core.services.process_cleanup import (
+    RuntimeDiagnostics,
+    tagged_processes,
+)
 from telegram_bot.core.services.providers import (
     choose_available_engine,
     engine_display_name,
@@ -453,11 +457,52 @@ async def handle_kill(message: Message, tmux_manager: TmuxManager) -> None:
 
 
 @router.message(Command("mcpstatus"))
-async def handle_mcpstatus(message: Message, tmux_manager: TmuxManager) -> None:
+async def handle_mcpstatus(
+    message: Message,
+    tmux_manager: TmuxManager,
+    topic_config: TopicConfig,
+    bot_defaults: BotDefaults,
+) -> None:
     """Show redacted MCP process diagnostics for the current topic."""
     key = channel_key(message)
-    status = html.escape(tmux_manager.mcp_status_text(key))
-    await message.answer(f"<pre>{status}</pre>", parse_mode="HTML")
+    runtime = resolve_topic_runtime_config(topic_config.get_topic(key[1]), bot_defaults)
+    if runtime.exec_mode == "tmux":
+        status = tmux_manager.mcp_status_text(key)
+    else:
+        status = _mcp_status_subprocess(runtime, key, tmux_manager)
+    await message.answer(f"<pre>{html.escape(status)}</pre>", parse_mode="HTML")
+
+
+def _mcp_status_subprocess(
+    runtime: TopicRuntimeConfig, key: ChannelKey, tmux_manager: TmuxManager
+) -> str:
+    """MCP diagnostics for a subprocess-mode channel (no tmux pane)."""
+    configured = tmux_manager._configured_mcp_servers(runtime.mcp_config)
+    procs = tagged_processes(channel_key=key, tmux_session=None, runtime_path=None)
+    diag = RuntimeDiagnostics(
+        pane_pid=None,
+        pane_sid=None,
+        sid_processes=(),
+        tagged_processes=procs,
+        configured_servers=configured,
+    )
+    dupes = diag.duplicate_generations
+    duplicate_lines = (
+        ", ".join(f"{name}={count}" for name, count in sorted(dupes.items()))
+        if dupes
+        else "none"
+    )
+    return "\n".join(
+        [
+            f"topic: {key[0]}:{key[1]}",
+            "mode: subprocess",
+            f"provider: {runtime.engine}",
+            f"configured: {', '.join(configured) if configured else 'none'}",
+            f"tagged_processes: {len(procs)}",
+            f"mcp_counts: {duplicate_lines}",
+            f"rss_mb: {diag.rss_kb / 1024:.1f}",
+        ]
+    )
 
 
 def _resolve_usage_for_session(
