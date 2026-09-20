@@ -388,9 +388,7 @@ def list_recent(
                 if stat is None:
                     continue
                 session_id = meta[0]
-                preview = (
-                    _first_codex_user_text(path) or session_id[:8]
-                )
+                preview = _first_codex_user_text(path) or session_id[:8]
                 entries.append(
                     SessionEntry(
                         provider="codex",

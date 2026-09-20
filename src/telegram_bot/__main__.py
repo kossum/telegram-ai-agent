@@ -183,6 +183,7 @@ async def process_queue_item(
         reply_message, session_manager, channel_key, prompt, tmux_manager=tmux_manager
     )
 
+
 async def _send_restart_note(bot: Bot, chat: dict[str, object], text: str) -> None:
     """Best-effort post-restart note to one chat/topic."""
     chat_id = chat.get("chat_id")
@@ -202,6 +203,7 @@ async def _send_restart_note(bot: Bot, chat: dict[str, object], text: str) -> No
     except Exception:
         logger.warning("restart note to %s failed", chat, exc_info=True)
 
+
 async def _restart_survive(bot: Bot, restart_path: Path, requested_at: float) -> None:
     """Confirm the restart once the new process has stayed up long enough."""
     await asyncio.sleep(restart_state.SURVIVE_S)
@@ -211,6 +213,7 @@ async def _restart_survive(bot: Bot, restart_path: Path, requested_at: float) ->
     for chat in state.chat_ids:
         await _send_restart_note(bot, chat, t("ui.restart_done"))
     restart_state.clear(restart_path)
+
 
 async def _handle_restart_marker(bot: Bot, restart_path: Path) -> asyncio.Task[None] | None:
     """On boot, report the just-completed in-place restart to its chats."""
@@ -226,6 +229,7 @@ async def _handle_restart_marker(bot: Bot, restart_path: Path) -> asyncio.Task[N
         for chat in state.chat_ids:
             await _send_restart_note(bot, chat, t("ui.restart_bounced", n=state.attempts))
     return asyncio.create_task(_restart_survive(bot, restart_path, state.requested_at))
+
 
 async def _start() -> None:
     logging.basicConfig(

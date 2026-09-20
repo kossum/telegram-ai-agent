@@ -591,9 +591,7 @@ def _mcp_status_subprocess(
     )
     dupes = diag.duplicate_generations
     duplicate_lines = (
-        ", ".join(f"{name}={count}" for name, count in sorted(dupes.items()))
-        if dupes
-        else "none"
+        ", ".join(f"{name}={count}" for name, count in sorted(dupes.items())) if dupes else "none"
     )
     return "\n".join(
         [
@@ -772,9 +770,7 @@ def _sessions_caption(
     ]
     for index, entry in enumerate(entries, start=1):
         marker = (
-            f" ({t('ui.resume_current_marker')})"
-            if entry.session_id == current_session_id
-            else ""
+            f" ({t('ui.resume_current_marker')})" if entry.session_id == current_session_id else ""
         )
         lines.append(f"{index}. {html.escape(entry.preview)}{marker}")
     lines.append("")
@@ -809,7 +805,6 @@ async def _sessions_list(
         _sessions_caption(tuple(entries), current, str(runtime.cwd)),
         parse_mode="HTML",
     )
-
 
 
 async def _sessions_switch(
@@ -1174,19 +1169,29 @@ async def on_busy_confirm(
     await session_manager.cancel(key)
     if action == "n":
         await _reset_channel(
-            msg, key, session_manager, message_queue, forward_batcher,
-            tmux_manager, topic_config,
+            msg,
+            key,
+            session_manager,
+            message_queue,
+            forward_batcher,
+            tmux_manager,
+            topic_config,
         )
     elif action == "r":
         runtime = resolve_topic_runtime_config(topic_config.get_topic(key[1]), bot_defaults)
         await _sessions_switch(
-            msg, runtime, key, arg, session_manager, picker_store,
-            message_queue, tmux_manager, force=True,
+            msg,
+            runtime,
+            key,
+            arg,
+            session_manager,
+            picker_store,
+            message_queue,
+            tmux_manager,
+            force=True,
         )
     elif action == "rs":
-        await handle_resend(
-            msg, session_manager, message_queue, tmux_manager, force=True
-        )
+        await handle_resend(msg, session_manager, message_queue, tmux_manager, force=True)
     else:
         await _restart_process(msg, session_manager)
     await _answer_callback_safely(callback)

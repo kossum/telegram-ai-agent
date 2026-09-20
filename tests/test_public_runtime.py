@@ -1311,10 +1311,7 @@ def test_list_recent_claude_strips_bot_boilerplate_from_preview(tmp_path: Path) 
         "hello from the user"
     )
     (root / f"{session_id}.jsonl").write_text(
-        json.dumps(
-            {"type": "user", "message": {"role": "user", "content": prompt}}
-        )
-        + "\n"
+        json.dumps({"type": "user", "message": {"role": "user", "content": prompt}}) + "\n"
     )
     entries = list_recent(str(cwd), "claude", home=home)
     assert len(entries) == 1
@@ -1404,9 +1401,7 @@ def _resume_test_fixture(tmp_path: Path, monkeypatch) -> tuple:
     )
 
 
-async def test_resume_subprocess_lists_sessions_with_numbers(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_resume_subprocess_lists_sessions_with_numbers(tmp_path: Path, monkeypatch) -> None:
     (
         message,
         session_manager,
@@ -1434,9 +1429,7 @@ async def test_resume_subprocess_lists_sessions_with_numbers(
     assert len(state.entries) == 1
 
 
-async def test_resume_number_switches_subprocess_session(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_resume_number_switches_subprocess_session(tmp_path: Path, monkeypatch) -> None:
     (
         message,
         session_manager,
@@ -1474,12 +1467,16 @@ async def test_resume_number_switches_subprocess_session(
     assert "Now on session" in message.answer.await_args.args[0]
 
 
-
 async def test_new_busy_shows_confirm(tmp_path: Path, monkeypatch) -> None:
     """A running turn makes /new ask to confirm instead of silently killing."""
     (
-        message, session_manager, topic_config, tmux_manager,
-        _picker_store, message_queue, _bot_defaults,
+        message,
+        session_manager,
+        topic_config,
+        tmux_manager,
+        _picker_store,
+        message_queue,
+        _bot_defaults,
     ) = _resume_test_fixture(tmp_path, monkeypatch)
     message_queue.is_busy.return_value = True
     message.text = "/new"
@@ -1495,8 +1492,13 @@ async def test_new_busy_shows_confirm(tmp_path: Path, monkeypatch) -> None:
 async def test_new_not_busy_resets(tmp_path: Path, monkeypatch) -> None:
     """No running turn: /new resets the channel immediately."""
     (
-        message, session_manager, topic_config, tmux_manager,
-        _picker_store, message_queue, _bot_defaults,
+        message,
+        session_manager,
+        topic_config,
+        tmux_manager,
+        _picker_store,
+        message_queue,
+        _bot_defaults,
     ) = _resume_test_fixture(tmp_path, monkeypatch)
     message_queue.is_busy.return_value = False
     tmux_manager.is_active.return_value = False
@@ -1513,8 +1515,13 @@ async def test_new_not_busy_resets(tmp_path: Path, monkeypatch) -> None:
 
 def _busy_confirm_callback(cb_data: str, monkeypatch, tmp_path: Path):
     (
-        message, session_manager, topic_config, tmux_manager,
-        picker_store, message_queue, bot_defaults,
+        message,
+        session_manager,
+        topic_config,
+        tmux_manager,
+        picker_store,
+        message_queue,
+        bot_defaults,
     ) = _resume_test_fixture(tmp_path, monkeypatch)
     tmux_manager.is_active.return_value = False
     message.edit_text = AsyncMock()
@@ -1526,16 +1533,20 @@ def _busy_confirm_callback(cb_data: str, monkeypatch, tmp_path: Path):
     cb.message = message
     cb.answer = AsyncMock()
     return (
-        cb, message, session_manager, topic_config,
-        tmux_manager, picker_store, message_queue, bot_defaults,
+        cb,
+        message,
+        session_manager,
+        topic_config,
+        tmux_manager,
+        picker_store,
+        message_queue,
+        bot_defaults,
     )
 
 
 async def test_busy_confirm_new_proceeds(tmp_path: Path, monkeypatch) -> None:
     cb, _message, sm, tc, tm, ps, mq, bd = _busy_confirm_callback("bcn:y", monkeypatch, tmp_path)
-    await commands.on_busy_confirm(
-        cb, sm, mq, MagicMock(), tm, tc, bd, ps
-    )
+    await commands.on_busy_confirm(cb, sm, mq, MagicMock(), tm, tc, bd, ps)
     sm.cancel.assert_awaited_once_with((1, None))
     sm.kill_session.assert_awaited_once()
 
@@ -1550,17 +1561,13 @@ async def test_busy_confirm_new_keeps(tmp_path: Path, monkeypatch) -> None:
 async def test_busy_confirm_resume_proceeds(tmp_path: Path, monkeypatch) -> None:
     cb, message, sm, tc, tm, ps, mq, bd = _busy_confirm_callback("bcr:1:y", monkeypatch, tmp_path)
     message.text = "/resume"
-    await commands.handle_resume(
-        message, sm, tc, tm, ps, mq, bd
-    )
+    await commands.handle_resume(message, sm, tc, tm, ps, mq, bd)
     await commands.on_busy_confirm(cb, sm, mq, MagicMock(), tm, tc, bd, ps)
     sm.cancel.assert_awaited_once_with((1, None))
     sm.override_session.assert_awaited_once()
 
 
-async def test_mcpstatus_subprocess_reports_tagged_processes(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_mcpstatus_subprocess_reports_tagged_processes(tmp_path: Path, monkeypatch) -> None:
     """In subprocess mode /mcpstatus reports channel-tagged MCP processes."""
     from telegram_bot.core.services.process_cleanup import RuntimeProcess
 
@@ -1581,8 +1588,13 @@ async def test_mcpstatus_subprocess_reports_tagged_processes(
     tmux_manager = MagicMock()
     tmux_manager._configured_mcp_servers.return_value = ("gods",)
     proc = RuntimeProcess(
-        pid=42, ppid=1, pgid=42, sid=42, rss_kb=2048,
-        command="node", args="node mcp-server",
+        pid=42,
+        ppid=1,
+        pgid=42,
+        sid=42,
+        rss_kb=2048,
+        command="node",
+        args="node mcp-server",
     )
     monkeypatch.setattr(commands, "tagged_processes", lambda **kw: (proc,))
     monkeypatch.setattr(commands, "choose_available_engine", lambda p: "codex")
@@ -1610,12 +1622,11 @@ async def test_restart_reexecs_same_pid(tmp_path: Path, monkeypatch) -> None:
     execv_calls: list = []
     killed: list = []
     monkeypatch.setattr(
-        commands.os, "execv",
+        commands.os,
+        "execv",
         lambda path, argv: execv_calls.append((path, argv)),
     )
-    monkeypatch.setattr(
-        commands.os, "kill", lambda pid, sig: killed.append(pid)
-    )
+    monkeypatch.setattr(commands.os, "kill", lambda pid, sig: killed.append(pid))
     monkeypatch.setattr(commands, "_descendant_pids", lambda self_pid: {42, 43})
     message_queue = MagicMock()
     message_queue.is_busy.return_value = False
@@ -1648,8 +1659,10 @@ async def test_restart_execv_failure_notifies(tmp_path: Path, monkeypatch) -> No
     message.message_thread_id = None
     session_manager = MagicMock()
     session_manager.restart_state_path = tmp_path / "restart_state.json"
+
     def boom(path, argv):
         raise OSError("ENOENT")
+
     monkeypatch.setattr(commands.os, "execv", boom)
     monkeypatch.setattr(commands, "_descendant_pids", lambda self_pid: set())
     message_queue = MagicMock()
@@ -1693,14 +1706,10 @@ async def test_restart_confirm_proceeds(tmp_path: Path, monkeypatch) -> None:
     """Confirming a busy /restart re-execs in place."""
     from telegram_bot.core.services import restart_state
 
-    cb, _message, sm, tc, tm, ps, mq, bd = _busy_confirm_callback(
-        "bcrst:y", monkeypatch, tmp_path
-    )
+    cb, _message, sm, tc, tm, ps, mq, bd = _busy_confirm_callback("bcrst:y", monkeypatch, tmp_path)
     sm.restart_state_path = tmp_path / "restart_state.json"
     execv_calls: list = []
-    monkeypatch.setattr(
-        commands.os, "execv", lambda path, argv: execv_calls.append((path, argv))
-    )
+    monkeypatch.setattr(commands.os, "execv", lambda path, argv: execv_calls.append((path, argv)))
     monkeypatch.setattr(commands, "_descendant_pids", lambda self_pid: set())
     monkeypatch.setattr(commands.asyncio, "sleep", AsyncMock())
 

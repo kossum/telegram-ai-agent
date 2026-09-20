@@ -7,6 +7,7 @@ survives both in-place and full container restarts) and the new process
 reports back. The marker also counts bounces, so a startup crash-loop
 becomes visible instead of silently looping until Docker gives up.
 """
+
 from __future__ import annotations
 
 import contextlib

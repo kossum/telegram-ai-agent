@@ -49,9 +49,7 @@ class PickerStore:
     def drop(self, token: str) -> None:
         self._states.pop(token, None)
 
-    def latest_for(
-        self, chat_id: int, thread_id: int | None
-    ) -> PickerState | None:
+    def latest_for(self, chat_id: int, thread_id: int | None) -> PickerState | None:
         """Most recent live state for one channel, or None.
 
         /resume N refers to the channel's latest /resume list, so no

@@ -858,9 +858,7 @@ class SessionManager:
 
         try:
             result_text, new_session_id = await asyncio.wait_for(
-                self._read_stream(
-                    process, on_event, provider=session.engine, session=session
-                ),
+                self._read_stream(process, on_event, provider=session.engine, session=session),
                 timeout=self._settings.cc_query_timeout_sec,
             )
         except TimeoutError:
