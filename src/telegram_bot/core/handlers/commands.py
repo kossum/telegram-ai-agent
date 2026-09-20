@@ -470,14 +470,16 @@ async def handle_resend(
     session_manager: SessionManager,
     message_queue: MessageQueue,
     tmux_manager: TmuxManager,
+    force: bool = False,
 ) -> None:
-    """Replay the last user message from scratch.
-
-    Cancels the in-flight turn, cuts the codex rollout at the last user message
-    (dropping it and everything after), then re-sends that message — preferring
-    the message's current Telegram text so an edited message replays the edit.
-    """
+    """Replay the last user message; confirm first if a turn is running."""
     key = channel_key(message)
+    if not force and (message_queue.is_busy(key) or tmux_manager.is_processing(key)):
+        await message.answer(
+            t("ui.busy_confirm_resend"),
+            reply_markup=busy_confirm_keyboard("rs"),
+        )
+        return
     session = session_manager._get_session(key)
     if not session.session_id:
         await message.answer(t("ui.resend_no_session"))
@@ -1149,6 +1151,8 @@ async def on_busy_confirm(
         action, arg = "r", parts[1]
     elif head == "bcrst":
         action, arg = "a", ""
+    elif head == "bcrsnd":
+        action, arg = "rs", ""
     else:
         await _answer_callback_safely(callback)
         return
@@ -1161,6 +1165,8 @@ async def on_busy_confirm(
         orig = t("ui.busy_confirm_new")
     elif action == "r":
         orig = t("ui.busy_confirm_resume")
+    elif action == "rs":
+        orig = t("ui.busy_confirm_resend")
     else:
         orig = t("ui.busy_confirm_restart")
     with contextlib.suppress(TelegramBadRequest):
@@ -1176,6 +1182,10 @@ async def on_busy_confirm(
         await _sessions_switch(
             msg, runtime, key, arg, session_manager, picker_store,
             message_queue, tmux_manager, force=True,
+        )
+    elif action == "rs":
+        await handle_resend(
+            msg, session_manager, message_queue, tmux_manager, force=True
         )
     else:
         await _restart_process(msg, session_manager)

@@ -228,6 +228,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.busy_confirm_new": ("\u23f3 A turn is running. Cancel it to start a new session?"),
         "ui.busy_confirm_resume": ("\u23f3 A turn is running. Cancel it to switch sessions?"),
         "ui.busy_confirm_restart": ("\u23f3 A turn is running. Cancel it to restart the bot?"),
+        "ui.busy_confirm_resend": ("\u23f3 A turn is running. Cancel it to resend?"),
         "ui.busy_kept": "Kept the turn going.",
         "ui.error_generic": "An error occurred while processing the request. Try again.",
         "ui.cc_not_found": "Claude Code not found. Make sure it is installed and on PATH.",
@@ -544,6 +545,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.busy_confirm_new": "\u23f3 Идёт ход. Отменить его, чтобы начать новую сессию?",
         "ui.busy_confirm_resume": "\u23f3 Идёт ход. Отменить его, чтобы переключить сессию?",
         "ui.busy_confirm_restart": "\u23f3 Идёт ход. Отменить его, чтобы перезапустить бота?",
+        "ui.busy_confirm_resend": "\u23f3 Идёт ход. Отменить его, чтобы переслать?",
         "ui.busy_kept": "Оставил ход работать.",
         "ui.error_generic": "Произошла ошибка при обработке запроса. Попробуй ещё раз.",
         "ui.cc_not_found": (

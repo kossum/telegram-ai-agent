@@ -1712,6 +1712,25 @@ async def test_restart_confirm_proceeds(tmp_path: Path, monkeypatch) -> None:
     assert marker.attempts == 0
 
 
+async def test_resend_busy_shows_confirm(tmp_path: Path, monkeypatch) -> None:
+    """A running turn makes /resend ask to confirm instead of killing it."""
+    message = MagicMock()
+    message.answer = AsyncMock()
+    message.chat.id = 1
+    message.message_thread_id = None
+    session_manager = MagicMock()
+    message_queue = MagicMock()
+    message_queue.is_busy.return_value = True
+    tmux_manager = MagicMock()
+    tmux_manager.is_processing.return_value = False
+
+    await commands.handle_resend(message, session_manager, message_queue, tmux_manager)
+
+    sent = message.answer.await_args
+    assert sent.args[0] == t("ui.busy_confirm_resend")
+    assert sent.kwargs.get("reply_markup") is not None
+
+
 async def test_restart_marker_first_attempt_silent(tmp_path: Path, monkeypatch) -> None:
     """A clean restart bumps to attempt 1, stays silent, schedules survival."""
     import time

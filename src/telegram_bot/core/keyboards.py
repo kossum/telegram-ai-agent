@@ -117,12 +117,14 @@ def engine_keyboard(current_engine: str | None = None) -> InlineKeyboardMarkup:
 
 def busy_confirm_keyboard(action: str, arg: str = "") -> InlineKeyboardMarkup:
     """Two-button confirm for a command that interrupts a running turn
-    (/new, /resume N, /restart). `action` is 'n', 'r', or 'a' (restart);
-    `arg` is the resume number (only used by 'r').""" 
+    (/new, /resume N, /restart, /resend). `action` is 'n', 'r', 'a',
+    or 'rs'; `arg` is the resume number (only used by 'r')."""
     if action == "n":
         head = "bcn"
     elif action == "r":
         head = f"bcr:{arg}"
+    elif action == "rs":
+        head = "bcrsnd"
     else:
         head = "bcrst"
     return InlineKeyboardMarkup(
