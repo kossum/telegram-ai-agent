@@ -11,6 +11,7 @@ from telegram_bot.core.config import Settings
 from telegram_bot.core.env_file import read_exact_env_file
 from telegram_bot.core.handlers import commands
 from telegram_bot.core.handlers.tail import handle_tail_command
+from telegram_bot.core.messages import t
 from telegram_bot.core.services import cc_modes
 from telegram_bot.core.services.bot_commands import build_bot_commands
 from telegram_bot.core.services.cc_events import mcp_server_event_by_name
@@ -1510,12 +1511,18 @@ async def test_mcpstatus_subprocess_reports_tagged_processes(
     assert "rss_mb: 2.0" in sent
 
 
-async def test_restart_reexecs_same_pid(monkeypatch) -> None:
-    """/restart replaces the process image in place via os.execv (same PID)."""
+async def test_restart_reexecs_same_pid(tmp_path: Path, monkeypatch) -> None:
+    """/restart re-execs in place (same PID) and leaves a persistent marker."""
     import sys
+
+    from telegram_bot.core.services import restart_state
 
     message = MagicMock()
     message.answer = AsyncMock()
+    message.chat.id = 1
+    message.message_thread_id = None
+    session_manager = MagicMock()
+    session_manager.restart_state_path = tmp_path / "restart_state.json"
     execv_calls: list = []
     killed: list = []
     monkeypatch.setattr(
@@ -1527,7 +1534,7 @@ async def test_restart_reexecs_same_pid(monkeypatch) -> None:
     )
     monkeypatch.setattr(commands, "_descendant_pids", lambda self_pid: {42, 43})
 
-    await commands.handle_restart(message)
+    await commands.handle_restart(message, session_manager)
 
     message.answer.assert_awaited_once()
     assert killed == [42, 43] or set(killed) == {42, 43}
@@ -1536,3 +1543,94 @@ async def test_restart_reexecs_same_pid(monkeypatch) -> None:
     assert path == sys.executable
     assert argv[0] == sys.executable
     assert argv[1] == sys.argv[0]
+
+    marker = restart_state.load(session_manager.restart_state_path)
+    assert marker is not None
+    assert marker.attempts == 0
+    assert marker.chat_ids == [{"chat_id": 1, "thread_id": None}]
+
+
+async def test_restart_execv_failure_notifies(tmp_path: Path, monkeypatch) -> None:
+    """/restart sends a failure note and counts a bounce when re-exec raises."""
+    from telegram_bot.core.services import restart_state
+
+    message = MagicMock()
+    message.answer = AsyncMock()
+    message.chat.id = 7
+    message.message_thread_id = None
+    session_manager = MagicMock()
+    session_manager.restart_state_path = tmp_path / "restart_state.json"
+    def boom(path, argv):
+        raise OSError("ENOENT")
+    monkeypatch.setattr(commands.os, "execv", boom)
+    monkeypatch.setattr(commands, "_descendant_pids", lambda self_pid: set())
+
+    await commands.handle_restart(message, session_manager)
+
+    texts = [c.args[0] for c in message.answer.await_args_list]
+    assert texts[-1] == t("ui.restart_failed", err="ENOENT")
+    marker = restart_state.load(session_manager.restart_state_path)
+    assert marker is not None
+    assert marker.attempts == 1
+
+
+async def test_restart_marker_first_attempt_silent(tmp_path: Path, monkeypatch) -> None:
+    """A clean restart bumps to attempt 1, stays silent, schedules survival."""
+    import time
+
+    from telegram_bot import __main__ as bot_main
+    from telegram_bot.core.services import restart_state
+
+    path = tmp_path / "restart_state.json"
+    state = restart_state.record_request(None, 123, None, time.time())
+    restart_state.save(path, state)
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    task = await bot_main._handle_restart_marker(bot, path)
+    assert task is not None
+    bot.send_message.assert_not_awaited()
+    marker = restart_state.load(path)
+    assert marker is not None and marker.attempts == 1
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_restart_marker_bounced_notifies(tmp_path: Path) -> None:
+    """A bounced restart (attempt > 1) tells the user immediately."""
+    import time
+
+    from telegram_bot import __main__ as bot_main
+    from telegram_bot.core.services import restart_state
+
+    path = tmp_path / "restart_state.json"
+    state = restart_state.record_request(None, 123, None, time.time())
+    state.attempts = 1  # it already came up once and bounced
+    restart_state.save(path, state)
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    task = await bot_main._handle_restart_marker(bot, path)
+    sent = [c.args[1] for c in bot.send_message.await_args_list]
+    assert t("ui.restart_bounced", n=2) in sent
+    marker = restart_state.load(path)
+    assert marker is not None and marker.attempts == 2
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_restart_marker_stale_cleared(tmp_path: Path) -> None:
+    """A marker older than the window is dropped without any note."""
+    import time
+
+    from telegram_bot import __main__ as bot_main
+    from telegram_bot.core.services import restart_state
+
+    path = tmp_path / "restart_state.json"
+    state = restart_state.record_request(None, 123, None, time.time() - 500)
+    restart_state.save(path, state)
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    task = await bot_main._handle_restart_marker(bot, path)
+    assert task is None
+    bot.send_message.assert_not_awaited()
+    assert not path.exists()

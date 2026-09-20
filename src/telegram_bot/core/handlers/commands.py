@@ -37,6 +37,7 @@ from telegram_bot.core.keyboards import (
     topic_keyboard,
 )
 from telegram_bot.core.messages import reset_lang_cache, t
+from telegram_bot.core.services import restart_state
 from telegram_bot.core.services.claude import SessionData, SessionManager
 from telegram_bot.core.services.codex_rollout import (
     fetch_message_text,
@@ -219,15 +220,32 @@ def _descendant_pids(self_pid: int) -> set[int]:
 
 
 @router.message(Command("restart"))
-async def handle_restart(message: Message) -> None:
+async def handle_restart(message: Message, session_manager: SessionManager) -> None:
     """Restart this bot process in place via os.execv (same PID)."""
+    state_path = session_manager.restart_state_path
+    state = restart_state.load(state_path)
+    state = restart_state.record_request(
+        state,
+        message.chat.id,
+        message.message_thread_id,
+        time.time(),
+    )
+    restart_state.save(state_path, state)
+
     await message.answer(t("ui.restart_running"))
     await asyncio.sleep(0.5)  # let Telegram deliver the note
     for pid in _descendant_pids(os.getpid()):
         with contextlib.suppress(OSError):
             os.kill(pid, signal.SIGTERM)
     await asyncio.sleep(0.3)
-    os.execv(sys.executable, [sys.executable, sys.argv[0], *sys.argv[1:]])
+    try:
+        os.execv(sys.executable, [sys.executable, sys.argv[0], *sys.argv[1:]])
+    except OSError as exc:
+        # re-exec failed: the old process is still up on the old code.
+        cur = restart_state.load(state_path) or state
+        cur.attempts = 1
+        restart_state.save(state_path, cur)
+        await message.answer(t("ui.restart_failed", err=str(exc)))
 
 
 @router.message(Command("language"))

@@ -31,6 +31,9 @@ MESSAGES: dict[str, dict[str, str]] = {
             "Hi! I'll forward your messages to Claude Code. Just send me anything."
         ),
         "ui.restart_running": "\U0001f504 Restarting the bot...",
+        "ui.restart_done": "\u2705 Restarted — back online.",
+        "ui.restart_bounced": "\u26a0\ufe0f Restarted, but it bounced before — this is attempt {n}",
+        "ui.restart_failed": "\u274c Restart failed: {err} (still running the old code).",
         "ui.thinking": "⏳ Thinking...",
         "ui.recognizing_voice": "⏳ Transcribing voice...",
         "ui.processing_forwards": "⏳ Processing forwarded messages...",
@@ -339,6 +342,9 @@ MESSAGES: dict[str, dict[str, str]] = {
             "Привет! Я перешлю твои сообщения в Claude Code. Просто отправь мне сообщение."
         ),
         "ui.restart_running": "\U0001f504 Перезапускаю бота...",
+        "ui.restart_done": "\u2705 Перезапущен — снова на связи.",
+        "ui.restart_bounced": "\u26a0\ufe0f Перезапущен, но был сбой — это попытка {n}",
+        "ui.restart_failed": "\u274c Перезапуск не удался: {err} (работает старая версия).",
         "ui.thinking": "⏳ Думаю...",
         "ui.recognizing_voice": "⏳ Распознаю голосовое...",
         "ui.processing_forwards": "⏳ Обрабатываю пересланные сообщения...",

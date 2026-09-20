@@ -284,6 +284,13 @@ class SessionManager:
             configured = self._settings.workspace_root_path / configured
         return str(configured.resolve())
 
+    @property
+    def restart_state_path(self) -> Path:
+        """Persistent marker for in-place restarts (see restart_state)."""
+        from telegram_bot.core.services import restart_state
+
+        return restart_state.path_for(self._mapping_path)
+
     def default_mcp_config_path(self) -> str:
         """Default MCP config path used by bot-launched sessions."""
         return str(default_bot_mcp_config(self._settings.app_root_path))

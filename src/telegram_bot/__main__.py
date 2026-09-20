@@ -31,6 +31,7 @@ from telegram_bot.core.handlers.voice import router as voice_router
 from telegram_bot.core.keyboards import topic_keyboard
 from telegram_bot.core.messages import t
 from telegram_bot.core.middleware.auth import AuthMiddleware
+from telegram_bot.core.services import restart_state
 from telegram_bot.core.services.bot_commands import setup_bot_commands
 from telegram_bot.core.services.claude import SessionManager
 from telegram_bot.core.services.codex_update import CodexUpdateService
@@ -182,6 +183,49 @@ async def process_queue_item(
         reply_message, session_manager, channel_key, prompt, tmux_manager=tmux_manager
     )
 
+async def _send_restart_note(bot: Bot, chat: dict[str, object], text: str) -> None:
+    """Best-effort post-restart note to one chat/topic."""
+    chat_id = chat.get("chat_id")
+    if not isinstance(chat_id, int):
+        return
+    thread_id = chat.get("thread_id")
+    if not isinstance(thread_id, int):
+        thread_id = None
+    try:
+        await bot.send_message(
+            chat_id,
+            text,
+            message_thread_id=thread_id,
+        )
+    except TelegramBadRequest:
+        pass
+    except Exception:
+        logger.warning("restart note to %s failed", chat, exc_info=True)
+
+async def _restart_survive(bot: Bot, restart_path: Path, requested_at: float) -> None:
+    """Confirm the restart once the new process has stayed up long enough."""
+    await asyncio.sleep(restart_state.SURVIVE_S)
+    state = restart_state.load(restart_path)
+    if state is None or state.requested_at != requested_at:
+        return  # superseded by a newer /restart, or already cleared
+    for chat in state.chat_ids:
+        await _send_restart_note(bot, chat, t("ui.restart_done"))
+    restart_state.clear(restart_path)
+
+async def _handle_restart_marker(bot: Bot, restart_path: Path) -> asyncio.Task[None] | None:
+    """On boot, report the just-completed in-place restart to its chats."""
+    state = restart_state.load(restart_path)
+    if state is None:
+        return None
+    if restart_state.is_stale(state):
+        restart_state.clear(restart_path)
+        return None
+    state.attempts += 1
+    restart_state.save(restart_path, state)
+    if state.attempts > 1:
+        for chat in state.chat_ids:
+            await _send_restart_note(bot, chat, t("ui.restart_bounced", n=state.attempts))
+    return asyncio.create_task(_restart_survive(bot, restart_path, state.requested_at))
 
 async def _start() -> None:
     logging.basicConfig(
@@ -295,8 +339,13 @@ async def _start() -> None:
 
     cleanup_task = asyncio.create_task(_periodic_tmp_cleanup())
 
+    restart_path = session_manager.restart_state_path
+    restart_task_holder: list[asyncio.Task[None]] = []
+
     async def _on_shutdown() -> None:
         logger.info("Shutting down: cleaning up sessions...")
+        for task in restart_task_holder:
+            task.cancel()
         cleanup_task.cancel()
         await forward_batcher.shutdown()
         await message_queue.shutdown()
@@ -306,6 +355,12 @@ async def _start() -> None:
         session_manager.save_mapping()
         tmux_manager.persist_state()
 
+    async def _on_restart_startup() -> None:
+        task = await _handle_restart_marker(bot, restart_path)
+        if task is not None:
+            restart_task_holder.append(task)
+
+    dp.startup.register(_on_restart_startup)
     dp.shutdown.register(_on_shutdown)
 
     loop = asyncio.get_running_loop()
