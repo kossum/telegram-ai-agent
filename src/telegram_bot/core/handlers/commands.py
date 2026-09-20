@@ -477,6 +477,9 @@ def _mcp_status_subprocess(
     runtime: TopicRuntimeConfig, key: ChannelKey, tmux_manager: TmuxManager
 ) -> str:
     """MCP diagnostics for a subprocess-mode channel (no tmux pane)."""
+    # Resolve the engine the way a session does (config may fall back, e.g.
+    # an unset claude resolving to an installed codex).
+    engine = choose_available_engine(runtime.engine) or runtime.engine
     configured = tmux_manager._configured_mcp_servers(runtime.mcp_config)
     procs = tagged_processes(channel_key=key, tmux_session=None, runtime_path=None)
     diag = RuntimeDiagnostics(
@@ -496,7 +499,7 @@ def _mcp_status_subprocess(
         [
             f"topic: {key[0]}:{key[1]}",
             "mode: subprocess",
-            f"provider: {runtime.engine}",
+            f"provider: {engine}",
             f"configured: {', '.join(configured) if configured else 'none'}",
             f"tagged_processes: {len(procs)}",
             f"mcp_counts: {duplicate_lines}",

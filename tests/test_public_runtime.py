@@ -1491,9 +1491,11 @@ async def test_mcpstatus_subprocess_reports_tagged_processes(
         command="node", args="node mcp-server",
     )
     monkeypatch.setattr(commands, "tagged_processes", lambda **kw: (proc,))
+    monkeypatch.setattr(commands, "choose_available_engine", lambda p: "codex")
     await commands.handle_mcpstatus(message, tmux_manager, topic_config, bot_defaults)
     sent = message.answer.await_args.args[0]
     assert "mode: subprocess" in sent
+    assert "provider: codex" in sent
     assert "configured: gods" in sent
     assert "tagged_processes: 1" in sent
     assert "rss_mb: 2.0" in sent
