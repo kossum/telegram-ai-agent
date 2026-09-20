@@ -34,27 +34,27 @@ class LocalizedBotCommand:
 
 PUBLIC_BOT_COMMANDS: tuple[LocalizedBotCommand, ...] = (
     LocalizedBotCommand("start", "Запустить бота", "Start the bot"),
-    LocalizedBotCommand("restart", "Перезапустить бота", "Restart the bot"),
-    LocalizedBotCommand("clear", "Сбросить текущий чат", "Reset the current chat"),
     LocalizedBotCommand("usage", "Показать использование контекста", "Show context window usage"),
-    LocalizedBotCommand("compact", "Сжать контекст сессии", "Compact the session context"),
     LocalizedBotCommand("cancel", "Отменить текущую обработку", "Cancel current processing"),
     LocalizedBotCommand("resend", "Повторить последнее сообщение", "Resend last message"),
-    LocalizedBotCommand("language", "Сменить язык интерфейса", "Change interface language"),
+    LocalizedBotCommand("new", "Начать новую сессию", "Start a new session"),
+    LocalizedBotCommand("resume", "Возобновить сохраненную сессию", "Resume a saved session"),
+    LocalizedBotCommand("compact", "Сжать контекст сессии", "Compact the session context"),
+    LocalizedBotCommand("restart", "Перезапустить бота", "Restart the bot"),
+    LocalizedBotCommand("mcpstatus", "Показать MCP-процессы", "Show MCP processes"),
+    LocalizedBotCommand("engine", "Выбрать Claude Code или Codex", "Choose Claude Code or Codex"),
     LocalizedBotCommand("mode", "Выбрать режим выполнения", "Choose execution mode"),
     LocalizedBotCommand("stream", "Выбрать режим ответов", "Choose response mode"),
-    LocalizedBotCommand("engine", "Выбрать Claude Code или Codex", "Choose Claude Code or Codex"),
-    LocalizedBotCommand("codex_update", "Обновить Codex CLI", "Update Codex CLI"),
-    LocalizedBotCommand("resume", "Возобновить сохраненную сессию", "Resume a saved session"),
-    LocalizedBotCommand("kill", "Остановить tmux-сессию", "Stop the tmux session"),
-    LocalizedBotCommand("recycle", "Перезапустить runtime топика", "Restart topic runtime"),
-    LocalizedBotCommand("mcpstatus", "Показать MCP-процессы", "Show MCP processes"),
+    LocalizedBotCommand("language", "Сменить язык интерфейса", "Change interface language"),
     LocalizedBotCommand("tui", "Открыть панель TUI", "Open the TUI panel"),
     LocalizedBotCommand(
         "tail",
         "Открыть панель TUI (старый алиас)",
         "Open the TUI panel (legacy alias)",
     ),
+    LocalizedBotCommand("kill", "Остановить tmux-сессию", "Stop the tmux session"),
+    LocalizedBotCommand("recycle", "Перезапустить runtime топика", "Restart topic runtime"),
+    LocalizedBotCommand("codex_update", "Обновить Codex CLI", "Update Codex CLI"),
 )
 
 
