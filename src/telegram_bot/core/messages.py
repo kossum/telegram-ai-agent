@@ -30,6 +30,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.start_welcome": (
             "Hi! I'll forward your messages to Claude Code. Just send me anything."
         ),
+        "ui.restart_running": "\U0001f504 Restarting the bot...",
         "ui.thinking": "⏳ Thinking...",
         "ui.recognizing_voice": "⏳ Transcribing voice...",
         "ui.processing_forwards": "⏳ Processing forwarded messages...",
@@ -337,6 +338,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.start_welcome": (
             "Привет! Я перешлю твои сообщения в Claude Code. Просто отправь мне сообщение."
         ),
+        "ui.restart_running": "\U0001f504 Перезапускаю бота...",
         "ui.thinking": "⏳ Думаю...",
         "ui.recognizing_voice": "⏳ Распознаю голосовое...",
         "ui.processing_forwards": "⏳ Обрабатываю пересланные сообщения...",

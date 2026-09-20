@@ -8,6 +8,8 @@ import html
 import logging
 import math
 import os
+import signal
+import sys
 import time
 from pathlib import Path
 
@@ -187,6 +189,45 @@ async def handle_start(message: Message) -> None:
         text=t("ui.start_welcome"),
         reply_markup=keyboard,
     )
+
+
+def _descendant_pids(self_pid: int) -> set[int]:
+    """All descendant PIDs of self_pid via a /proc walk (no psutil)."""
+    children: dict[int, list[int]] = {}
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            stat = (proc / "stat").read_text()
+        except OSError:
+            continue
+        rest = stat.split(")", 1)
+        if len(rest) != 2:
+            continue
+        fields = rest[1].split()
+        # after ')' : fields[0]=state, fields[1]=ppid
+        children.setdefault(int(fields[1]), []).append(int(proc.name))
+    seen: set[int] = set()
+    stack = list(children.get(self_pid, ()))
+    while stack:
+        pid = stack.pop()
+        if pid in seen or pid == self_pid:
+            continue
+        seen.add(pid)
+        stack.extend(children.get(pid, ()))
+    return seen
+
+
+@router.message(Command("restart"))
+async def handle_restart(message: Message) -> None:
+    """Restart this bot process in place via os.execv (same PID)."""
+    await message.answer(t("ui.restart_running"))
+    await asyncio.sleep(0.5)  # let Telegram deliver the note
+    for pid in _descendant_pids(os.getpid()):
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGTERM)
+    await asyncio.sleep(0.3)
+    os.execv(sys.executable, [sys.executable, sys.argv[0], *sys.argv[1:]])
 
 
 @router.message(Command("language"))

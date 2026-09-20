@@ -496,6 +496,7 @@ def test_claude_local_command_records_do_not_open_a_turn() -> None:
 
 def test_public_command_handlers_are_wired() -> None:
     assert commands.handle_resume is not None
+    assert commands.handle_restart is not None
     assert commands.handle_stream_mode is not None
     assert commands.handle_mode_command is not None
     assert commands.handle_engine_command is not None
@@ -511,6 +512,7 @@ def test_public_bot_command_menu_is_public_only() -> None:
     assert "codex_update" in command_names
     assert "recycle" in command_names
     assert "mcpstatus" in command_names
+    assert "restart" in command_names
     assert "tui" in command_names
     assert "tail" in command_names
     assert "new" not in command_names
@@ -593,6 +595,13 @@ def test_compact_routes_to_bot_not_tui() -> None:
     assert route_slash_command("/compact") == "bot"
     assert route_slash_command("/compact keep only the API notes") == "bot"
     assert route_slash_command("/model sonnet") == "tui"
+
+
+def test_restart_routes_to_bot_not_tui() -> None:
+    from telegram_bot.core.tui.routing import route_slash_command
+
+    assert route_slash_command("/restart") == "bot"
+    assert route_slash_command("/restart now") == "bot"
 
 
 def test_compact_turn_window_floor() -> None:
@@ -1499,3 +1508,31 @@ async def test_mcpstatus_subprocess_reports_tagged_processes(
     assert "configured: gods" in sent
     assert "tagged_processes: 1" in sent
     assert "rss_mb: 2.0" in sent
+
+
+async def test_restart_reexecs_same_pid(monkeypatch) -> None:
+    """/restart replaces the process image in place via os.execv (same PID)."""
+    import sys
+
+    message = MagicMock()
+    message.answer = AsyncMock()
+    execv_calls: list = []
+    killed: list = []
+    monkeypatch.setattr(
+        commands.os, "execv",
+        lambda path, argv: execv_calls.append((path, argv)),
+    )
+    monkeypatch.setattr(
+        commands.os, "kill", lambda pid, sig: killed.append(pid)
+    )
+    monkeypatch.setattr(commands, "_descendant_pids", lambda self_pid: {42, 43})
+
+    await commands.handle_restart(message)
+
+    message.answer.assert_awaited_once()
+    assert killed == [42, 43] or set(killed) == {42, 43}
+    assert len(execv_calls) == 1
+    path, argv = execv_calls[0]
+    assert path == sys.executable
+    assert argv[0] == sys.executable
+    assert argv[1] == sys.argv[0]

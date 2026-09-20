@@ -34,6 +34,7 @@ class LocalizedBotCommand:
 
 PUBLIC_BOT_COMMANDS: tuple[LocalizedBotCommand, ...] = (
     LocalizedBotCommand("start", "Запустить бота", "Start the bot"),
+    LocalizedBotCommand("restart", "Перезапустить бота", "Restart the bot"),
     LocalizedBotCommand("clear", "Сбросить текущий чат", "Reset the current chat"),
     LocalizedBotCommand("usage", "Показать использование контекста", "Show context window usage"),
     LocalizedBotCommand("compact", "Сжать контекст сессии", "Compact the session context"),
