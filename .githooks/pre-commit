@@ -1,4 +1,29 @@
 #!/bin/sh
+# Pre-commit: lint + format-check staged Python; then the central codex-sync
+# guard (kept from the previous hook, skipped if the script isn't on this box).
+# Activate per checkout with:  git config core.hooksPath .githooks
 set -eu
 
-exec python3 "$HOME/.claude/scripts/codex-sync-git-guard.py" pre-commit --scope project --repo "$(git rev-parse --show-toplevel)"
+repo=$(git rev-parse --show-toplevel)
+
+# ruff via the project venv (uv) when available, else whatever ruff is on PATH.
+if command -v uv >/dev/null 2>&1; then
+  ruff() { uv run ruff "$@"; }
+else
+  ruff() { ruff "$@"; }
+fi
+
+# Python files added/modified/copied in this commit (deletions skipped).
+staged_py=$(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+if [ -n "$staged_py" ]; then
+  # shellcheck disable=SC2086
+  ruff check $staged_py
+  # shellcheck disable=SC2086
+  ruff format --check $staged_py
+fi
+
+# Previous central guard: only when the script exists on this machine.
+guard="$HOME/.claude/scripts/codex-sync-git-guard.py"
+if [ -f "$guard" ]; then
+  exec python3 "$guard" pre-commit --scope project --repo "$repo"
+fi

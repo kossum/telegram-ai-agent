@@ -1,4 +1,9 @@
 #!/bin/sh
+# Pre-push: central codex-sync guard (skipped if the script isn't on this box).
 set -eu
 
-exec python3 "$HOME/.claude/scripts/codex-sync-git-guard.py" pre-push --scope project --repo "$(git rev-parse --show-toplevel)"
+repo=$(git rev-parse --show-toplevel)
+guard="$HOME/.claude/scripts/codex-sync-git-guard.py"
+if [ -f "$guard" ]; then
+  exec python3 "$guard" pre-push --scope project --repo "$repo"
+fi
