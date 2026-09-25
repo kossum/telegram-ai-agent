@@ -411,6 +411,18 @@ class SessionManager:
             self._sessions[channel_key] = session
         # Apply on every lookup — picks up live edits to topic_config.json.
         self._apply_topic_config(self._sessions[channel_key], channel_key)
+        session = self._sessions[channel_key]
+        if not session.session_id and not session.lock.locked():
+            saved = self._channel_sessions.get(self._ch_key(channel_key))
+            if isinstance(saved, str):
+                session.session_id = saved
+            elif isinstance(saved, dict):
+                saved_sid = saved.get("session_id")
+                provider = saved.get("provider")
+                if isinstance(saved_sid, str) and (
+                    not isinstance(provider, str) or provider == session.engine
+                ):
+                    session.session_id = saved_sid
         return self._sessions[channel_key]
 
     def has_active_provider_process(self, provider: str) -> bool:
@@ -483,6 +495,9 @@ class SessionManager:
             "--max-turns",
             str(self._settings.cc_max_turns),
         ]
+        claude_settings = self._settings.claude_settings.strip()
+        if claude_settings:
+            base.extend(["--settings", claude_settings])
         if model:
             base.extend(["--model", model])
         # Only attach an MCP config when the file exists. CC fails fast with
@@ -549,6 +564,8 @@ class SessionManager:
         with contextlib.suppress(FileNotFoundError):
             output_path.unlink()
         codex_env = codex_process_env()
+        codex_profile = self._settings.codex_profile.strip()
+        profile_args = ["--profile", codex_profile] if codex_profile else []
         codex_home = Path(codex_env.get("CODEX_HOME", Path.home() / ".codex"))
         inherited_servers = discover_codex_mcp_server_names(cwd, codex_home=codex_home)
         mcp_args = build_codex_mcp_config_args(
@@ -559,6 +576,7 @@ class SessionManager:
         if session.session_id:
             argv = [
                 CODEX_ADAPTER.binary(),
+                *profile_args,
                 "exec",
                 "resume",
                 *mcp_args,
@@ -573,6 +591,7 @@ class SessionManager:
         else:
             argv = [
                 CODEX_ADAPTER.binary(),
+                *profile_args,
                 "exec",
                 *mcp_args,
                 "--json",
@@ -963,10 +982,9 @@ class SessionManager:
             )
             raise CCProcessError(process.returncode)
 
-        # Don't update session_id from force-killed process output (may be stale)
-        if force_killed:
-            session.session_id = None
-        elif new_session_id:
+        # A forced kill must not erase a session ID already known from the
+        # channel mapping or an early stream event.
+        if not force_killed and new_session_id:
             session.session_id = new_session_id
 
         session.last_activity = time.monotonic()
@@ -1478,9 +1496,17 @@ class SessionManager:
 
     def get_current_session_id(self, channel_key: ChannelKey) -> str | None:
         """Get the current session_id for a channel, or None if no session."""
-        if channel_key not in self._sessions:
-            return None
-        return self._sessions[channel_key].session_id
+        session = self._sessions.get(channel_key)
+        if session is not None and session.session_id:
+            return session.session_id
+        saved = self._channel_sessions.get(self._ch_key(channel_key))
+        if isinstance(saved, str):
+            return saved
+        if isinstance(saved, dict):
+            session_id = saved.get("session_id")
+            if isinstance(session_id, str):
+                return session_id
+        return None
 
     async def _clear_session_state_locked(self, session: SessionData) -> None:
         """Reset SessionData state — caller must hold ``session.lock``.

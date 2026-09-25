@@ -252,6 +252,8 @@ async def _start() -> None:
     topic_config = TopicConfig(str(topic_config_path), str(workspace_root))
     tmux_manager = TmuxManager(
         sessions_dir=tmux_sessions_dir,
+        codex_profile=settings.codex_profile,
+        claude_settings=settings.claude_settings,
     )
     codex_update_service = CodexUpdateService(
         state_path=tmux_sessions_dir / "codex_update.json",

@@ -54,7 +54,6 @@ from telegram_bot.core.services.context_usage import (
     get_codex_context_usage,
     resolve_claude_max_context_tokens,
     resolve_compact_turn_window,
-    resolve_max_context_tokens,
 )
 from telegram_bot.core.services.message_queue import MessageQueue
 from telegram_bot.core.services.picker_store import PickerState, PickerStore
@@ -623,7 +622,14 @@ def _resolve_usage_for_session(
         if not session.session_id:
             return None, None
         usage = get_codex_context_usage(session.session_id)
-        max_tokens = resolve_max_context_tokens(settings.codex_context_window_max)
+        override = settings.codex_context_window_max
+        max_tokens = (
+            override
+            if override is not None and override > 0
+            else usage.context_window_max
+            if usage is not None
+            else None
+        )
         return usage, max_tokens
     return None, None
 
@@ -772,7 +778,11 @@ def _sessions_caption(
         marker = (
             f" ({t('ui.resume_current_marker')})" if entry.session_id == current_session_id else ""
         )
-        lines.append(f"{index}. {html.escape(entry.preview)}{marker}")
+        preview = entry.preview
+        if marker and len(preview) + len(marker) > 60:
+            limit = 60 - len(marker)
+            preview = preview[: limit - 1].rstrip() + "…"
+        lines.append(f"{index}. {html.escape(preview)}{marker}")
     lines.append("")
     lines.append(t("ui.sessions_hint", count=len(entries)))
     return "\n".join(lines)

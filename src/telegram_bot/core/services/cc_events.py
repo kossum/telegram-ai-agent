@@ -367,7 +367,7 @@ def parse_cc_event(
 ) -> tuple[list[StreamEvent], str | None]:
     """Parse one CC stream-json event into StreamEvents.
 
-    Returns (events, session_id_if_result_event).
+    Returns (events, session_id from the init or result event).
     Modifies active_agents and agent_last_progress in place for agent
     lifecycle tracking.
     """
@@ -378,6 +378,10 @@ def parse_cc_event(
 
     if event_type == "system":
         subtype = data.get("subtype")
+        if subtype == "init":
+            init_session_id = data.get("session_id")
+            if isinstance(init_session_id, str) and init_session_id:
+                session_id = init_session_id
 
         if subtype == "status":
             if data.get("status") == "compacting":

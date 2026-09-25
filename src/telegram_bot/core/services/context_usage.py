@@ -3,8 +3,7 @@
 Reads the transcript for the active session (Codex rollout jsonl or
 Claude Code project jsonl) and reports how many tokens the current
 context occupies, plus cumulative turn and session totals. The max
-context window is resolved from an explicit override, then from the
-Codex config (``model_context_window``) or a per-model default.
+context window comes from the Codex rollout ``token_count`` event.
 """
 
 from __future__ import annotations
@@ -24,10 +23,6 @@ _CODEX_SESSION_ID_RE = re.compile(
     r"-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 )
 _CLAUDE_DEFAULT_WINDOW = 200_000
-_CONTEXT_WINDOW_RE = re.compile(
-    r"^\s*model_context_window\s*="
-    r"\s*(\d+)\s*(?:#.*)?$"
-)
 _SOFT_CAP_BYTES = 128 * 1024
 
 
@@ -41,6 +36,7 @@ class ContextUsage:
     last_turn_output_tokens: int
     timestamp: str | None
     compaction_count: int
+    context_window_max: int | None = None
 
 
 def _codex_home(home: Path) -> Path:
@@ -163,9 +159,23 @@ def get_codex_context_usage(session_id: str, home: Path | None = None) -> Contex
         return None
 
     model: str | None = None
+    context_window_max: int | None = None
     last_record: dict[str, object] | None = None
     for data in _iter_tail(path):
         record_type = data.get("type")
+        event = data.get("payload")
+        if (
+            context_window_max is None
+            and record_type == "event_msg"
+            and isinstance(event, dict)
+            and event.get("type") == "token_count"
+        ):
+            info = event.get("info")
+            value = info.get("model_context_window") if isinstance(info, dict) else None
+            if not isinstance(value, int):
+                value = event.get("model_context_window")
+            if isinstance(value, int) and value > 0:
+                context_window_max = value
         if last_record is None and record_type == "token_usage_record":
             payload = data.get("payload")
             if isinstance(payload, dict) and isinstance(payload.get("usage"), dict):
@@ -174,7 +184,7 @@ def get_codex_context_usage(session_id: str, home: Path | None = None) -> Contex
             payload = data.get("payload")
             if isinstance(payload, dict) and isinstance(payload.get("model"), str):
                 model = payload["model"]
-        if last_record is not None and model is not None:
+        if last_record is not None and model is not None and context_window_max:
             break
     if last_record is None:
         return None
@@ -202,26 +212,8 @@ def get_codex_context_usage(session_id: str, home: Path | None = None) -> Contex
         last_turn_output_tokens=int(usage.get("output_tokens", 0)),
         timestamp=timestamp,
         compaction_count=_count_compactions(path),
+        context_window_max=context_window_max,
     )
-
-
-def resolve_max_context_tokens(override: int | None = None, home: Path | None = None) -> int | None:
-    """Resolve the model max context window: override, then Codex config."""
-    if override is not None and override > 0:
-        return override
-    home = home or Path.home()
-    config = _codex_home(home) / "config.toml"
-    try:
-        text = config.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        if line.lstrip().startswith("#"):
-            continue
-        match = _CONTEXT_WINDOW_RE.match(line)
-        if match:
-            return int(match.group(1))
-    return None
 
 
 _COMPACT_TURN_WINDOW_FLOOR = 49_152  # 48 KiB tokens

@@ -628,7 +628,6 @@ def test_context_usage_from_rollout(tmp_path, monkeypatch) -> None:
     from telegram_bot.core.services.context_usage import (
         format_usage,
         get_codex_context_usage,
-        resolve_max_context_tokens,
     )
 
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
@@ -637,6 +636,13 @@ def test_context_usage_from_rollout(tmp_path, monkeypatch) -> None:
     root.mkdir(parents=True)
     rollout = root / f"rollout-2026-09-15T11-10-01-{sid}.jsonl"
     turn_ctx = {"type": "turn_context", "payload": {"model": "qwen3.8-27b"}}
+    token_count = {
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "info": {"model_context_window": 258400},
+        },
+    }
     usage_rec = {
         "type": "token_usage_record",
         "payload": {
@@ -663,7 +669,7 @@ def test_context_usage_from_rollout(tmp_path, monkeypatch) -> None:
             },
         },
     }
-    data = "".join(json.dumps(r) + "\n" for r in (turn_ctx, usage_rec, compact_rec))
+    data = "".join(json.dumps(r) + "\n" for r in (turn_ctx, usage_rec, token_count, compact_rec))
     rollout.write_text(data)
 
     usage = get_codex_context_usage(sid, home=tmp_path)
@@ -673,10 +679,7 @@ def test_context_usage_from_rollout(tmp_path, monkeypatch) -> None:
     assert usage.turn_total_tokens == 1100
     assert usage.thread_total_tokens == 1100
     assert usage.compaction_count == 1
-
-    (tmp_path / "config.toml").write_text("model_context_window = 32768\n")
-    assert resolve_max_context_tokens(None, home=tmp_path) == 32768
-    assert resolve_max_context_tokens(2000, home=tmp_path) == 2000
+    assert usage.context_window_max == 258400
 
     text = format_usage(usage, 2000)
     assert "50%" in text
@@ -745,6 +748,21 @@ def test_claude_context_usage_from_transcript(tmp_path) -> None:
     text = format_usage(usage, 2000)
     assert "55%" in text
     assert "1,100" in text
+
+
+def test_claude_init_event_exposes_session_id_immediately() -> None:
+    from telegram_bot.core.services.cc_events import parse_cc_event
+
+    session_id = "claude-session-id"
+    events, parsed_id = parse_cc_event(
+        {"type": "system", "subtype": "init", "session_id": session_id},
+        {},
+        {},
+        0,
+    )
+
+    assert parsed_id == session_id
+    assert events == []
 
 
 def test_repair_poisoned_rollout(tmp_path, monkeypatch) -> None:
@@ -1234,9 +1252,12 @@ def test_resend_edit_text_caching(tmp_path: Path, monkeypatch) -> None:
     # The cache is persisted and survives a bot restart.
     mgr2 = SessionManager(settings)
     mgr2.load_mapping()
+    assert mgr2.get_current_session_id(key) == s.session_id
     s2 = mgr2._get_session(key)
     assert s2.last_user_message_id == 200
     assert s2.last_user_message_text == "new message"
+    s2.session_id = None  # Simulate an in-memory clear with JSON still intact.
+    assert mgr2._get_session(key).session_id == s.session_id
 
 
 def test_resend_find_rollout_path(tmp_path: Path, monkeypatch) -> None:
@@ -1285,6 +1306,9 @@ def test_list_recent_finds_exec_rollout_with_first_user_preview(tmp_path: Path) 
             _meta_line(session_id, cwd=str(cwd), originator="codex_exec"),
             _user_line("# AGENTS.md instructions for /proj\n\n<INSTRUCTIONS>\nstuff"),
             _user_line(
+                "<recommended_plugins>\n"
+                "Here is a list of plugins available.\n"
+                "</recommended_plugins>\n"
                 "You are an assistant in a Telegram chat.\n"
                 "<telegram-context>\nchat_id: 1\n</telegram-context>\n\n"
                 "hello from the user"
@@ -1427,6 +1451,23 @@ async def test_resume_subprocess_lists_sessions_with_numbers(tmp_path: Path, mon
     state = picker_store.latest_for(1, None)
     assert state is not None
     assert len(state.entries) == 1
+
+
+def test_resume_current_marker_fits_within_preview_limit() -> None:
+    entry = commands.SessionEntry(
+        provider="codex",
+        session_id="session-1",
+        transcript_path=Path("/tmp/session.jsonl"),
+        preview="x" * 60,
+        mtime=0,
+        size_bytes=0,
+    )
+
+    caption = commands._sessions_caption((entry,), "session-1", "/proj")
+    row = next(line for line in caption.splitlines() if line.startswith("1. "))
+
+    assert row.endswith(" (current)")
+    assert len(row.removeprefix("1. ")) == 60
 
 
 async def test_resume_number_switches_subprocess_session(tmp_path: Path, monkeypatch) -> None:

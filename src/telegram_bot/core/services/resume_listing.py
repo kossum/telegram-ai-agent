@@ -264,6 +264,7 @@ def _same_cwd(left: str | Path, right: str | Path) -> bool:
 # <telegram-context> block; codex CLI injects AGENTS.md as a separate
 # user-role message. Both are noise in a "first user message" preview.
 _TG_CONTEXT_END = "</telegram-context>"
+_INJECTED_BLOCKS = ("recommended_plugins",)
 
 
 def _is_agents_md_injection(text: str) -> bool:
@@ -277,6 +278,17 @@ def _strip_bot_boilerplate(text: str) -> str:
     """Drop injected prefix so previews show the user's own words."""
     text = (text or "").strip()
     if not text or _is_agents_md_injection(text):
+        return ""
+    # These blocks are runtime-injected context, not the user's request.
+    # They may appear before the actual message in the same transcript item.
+    for tag in _INJECTED_BLOCKS:
+        start = f"<{tag}>"
+        end = f"</{tag}>"
+        while text.startswith(start):
+            if end not in text:
+                return ""
+            text = text.split(end, 1)[1].strip()
+    if _is_agents_md_injection(text):
         return ""
     if _TG_CONTEXT_END in text:
         text = text.split(_TG_CONTEXT_END, 1)[1]

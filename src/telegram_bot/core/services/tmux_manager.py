@@ -45,6 +45,7 @@ import hashlib
 import json
 import logging
 import re
+import shlex
 import subprocess
 import time
 from collections import deque
@@ -247,9 +248,13 @@ class TmuxManager:
         sessions_dir: Path,
         *,
         session_name_prefix: str = "cc-",
+        codex_profile: str = "",
+        claude_settings: str = "",
     ) -> None:
         self._sessions_dir = sessions_dir
         self._session_name_prefix = session_name_prefix
+        self._codex_profile = codex_profile.strip()
+        self._claude_settings = claude_settings.strip()
         self._sessions: dict[ChannelKey, TmuxSessionState] = {}
         self._cancel_events: dict[ChannelKey, asyncio.Event] = {}
         self._is_processing: dict[ChannelKey, bool] = {}
@@ -911,6 +916,14 @@ class TmuxManager:
         sanitized_startup = startup_cmd
         if startup_cmd[:2] != ["env", "-i"]:
             sanitized_startup = [*agent_env_prefix(binary=startup_cmd[0]), *startup_cmd]
+        option = None
+        value = None
+        if provider == "codex" and self._codex_profile:
+            option, value = "--profile", self._codex_profile
+        elif provider != "codex" and self._claude_settings:
+            option, value = "--settings", self._claude_settings
+        if option and value:
+            sanitized_startup = [*sanitized_startup, option, shlex.quote(value)]
         new_session_argv = [
             "tmux",
             "new-session",
