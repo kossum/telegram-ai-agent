@@ -8,6 +8,7 @@ import html
 import logging
 import math
 import os
+import re
 import signal
 import sys
 import time
@@ -62,7 +63,9 @@ from telegram_bot.core.services.process_cleanup import (
     tagged_processes,
 )
 from telegram_bot.core.services.providers import (
+    CODEX_ADAPTER,
     choose_available_engine,
+    claude_binary,
     engine_display_name,
 )
 from telegram_bot.core.services.resume_listing import (
@@ -90,6 +93,29 @@ from telegram_bot.core.types import ChannelKey, channel_key
 from telegram_bot.core.utils.telegram_html import split_html_message
 
 logger = logging.getLogger(__name__)
+
+
+def _format_plugin_list(output: str) -> str:
+    marketplace = ""
+    plugins: list[str] = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Marketplace "):
+            marketplace = stripped
+            continue
+        fields = stripped.split()
+        if len(fields) < 3 or fields[0] == "PLUGIN":
+            continue
+        if re.match(r"^app-[0-9a-f]{12,}@", fields[0], re.IGNORECASE):
+            continue
+        if fields[1] == "not" and fields[2] == "installed":
+            plugins.append(f"🚫 {fields[0]}")
+        elif fields[1] in {"installed", "enabled"}:
+            plugins.append(f"✅ {fields[0]}")
+    parts = ([marketplace] if marketplace else []) + plugins
+    if not plugins:
+        parts.append("No named plugins found.")
+    return "\n".join(parts) or output.strip() or "No plugins found."
 
 
 def _exec_mode_label(mode: str) -> str:
@@ -287,6 +313,54 @@ async def handle_language(message: Message) -> None:
     os.environ["BOT_LANG"] = lang
     reset_lang_cache()
     await message.answer(t("ui.language_changed", lang=lang))
+
+
+async def _list_agent_assets(message: Message, session_manager: SessionManager, kind: str) -> None:
+    engine = session_manager._get_session(channel_key(message)).engine
+    home = Path.home()
+    if kind == "skills":
+        codex_home = home / ".codex"
+        if (home / ".codex-bot" / "config.toml").exists() and os.getenv(
+            "TELEGRAM_CODEX_SHARED_HOME", ""
+        ).lower() not in {"1", "true", "yes", "on"}:
+            codex_home = home / ".codex-bot"
+        roots = [home / ".claude" / "skills"] if engine == "claude" else [codex_home / "skills"]
+        roots += [Path.cwd() / ".claude" / "skills", Path.cwd() / ".agents" / "skills"]
+        names = sorted(
+            {p.name for root in roots if root.is_dir() for p in root.iterdir() if p.is_dir()}
+        )
+        body = "\n".join(names) if names else "No skills found."
+    else:
+        try:
+            binary = claude_binary() if engine == "claude" else CODEX_ADAPTER.binary()
+        except (OSError, RuntimeError) as exc:
+            body = f"{engine} CLI is unavailable: {exc}"
+        else:
+            args = [binary, "plugin", "list"]
+            proc = await asyncio.create_subprocess_exec(
+                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            )
+            output, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+            body = output.decode(errors="replace").strip() or "No plugins found."
+            if proc.returncode:
+                body = f"Plugin list unavailable ({proc.returncode}):\n{body}"
+            else:
+                body = _format_plugin_list(body)
+    response = (
+        f"<b>{kind.title()} ({engine})</b>\n"
+        f"<pre>{html.escape(body[:3500])}</pre>"
+    )
+    await message.answer(response, parse_mode="HTML")
+
+
+@router.message(Command("skills"))
+async def handle_skills(message: Message, session_manager: SessionManager) -> None:
+    await _list_agent_assets(message, session_manager, "skills")
+
+
+@router.message(Command("plugins"))
+async def handle_plugins(message: Message, session_manager: SessionManager) -> None:
+    await _list_agent_assets(message, session_manager, "plugins")
 
 
 @router.message(Command("codex_update"))

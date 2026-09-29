@@ -42,6 +42,8 @@ PUBLIC_BOT_COMMANDS: tuple[LocalizedBotCommand, ...] = (
     LocalizedBotCommand("compact", "Сжать контекст сессии", "Compact the session context"),
     LocalizedBotCommand("restart", "Перезапустить бота", "Restart the bot"),
     LocalizedBotCommand("mcpstatus", "Показать MCP-процессы", "Show MCP processes"),
+    LocalizedBotCommand("skills", "Показать доступные skills", "List available skills"),
+    LocalizedBotCommand("plugins", "Показать установленные plugins", "List installed plugins"),
     LocalizedBotCommand("engine", "Выбрать Claude Code или Codex", "Choose Claude Code or Codex"),
     LocalizedBotCommand("mode", "Выбрать режим выполнения", "Choose execution mode"),
     LocalizedBotCommand("stream", "Выбрать режим ответов", "Choose response mode"),
